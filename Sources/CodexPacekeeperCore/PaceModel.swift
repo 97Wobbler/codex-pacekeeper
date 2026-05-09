@@ -81,6 +81,42 @@ public struct PaceReading: Equatable {
     }
 }
 
+public struct PaceRecommendation: Equatable {
+    public let action: String
+    public let guidance: String
+    public let status: PaceStatus
+
+    public init(primary: PaceReading, weekly: PaceReading) {
+        if primary.isPaused || weekly.isPaused {
+            self.init(action: "Paused", status: .steady)
+            return
+        }
+
+        if weekly.actualPercent >= 90 || weekly.status == .redline {
+            self.init(action: "Short efforts only", status: .redline)
+            return
+        }
+
+        if weekly.status == .threshold {
+            self.init(action: "Taper recommended", status: .threshold)
+            return
+        }
+
+        if weekly.status == .easy && primary.status != .redline {
+            self.init(action: "Pick up pace", status: .easy)
+            return
+        }
+
+        self.init(action: primary.guidance, status: primary.status)
+    }
+
+    private init(action: String, status: PaceStatus) {
+        self.action = action
+        self.guidance = action
+        self.status = status
+    }
+}
+
 public enum UsageSnapshotState: String, Equatable {
     case loading
     case fresh
@@ -144,6 +180,10 @@ public struct UsageSnapshot: Equatable {
 
     public var hasUsageData: Bool {
         state == .fresh || state == .stale
+    }
+
+    public var paceRecommendation: PaceRecommendation {
+        PaceRecommendation(primary: primary, weekly: weekly)
     }
 
     public var menuBarTitle: String {

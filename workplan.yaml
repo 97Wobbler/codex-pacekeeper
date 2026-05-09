@@ -24,7 +24,7 @@ tasks:
     name: Core global pace recommendation engine
     blocked_by: []
     human_gate: null
-    done: false
+    done: true
     category: feat
     output:
       - Sources/CodexPacekeeperCore/PaceModel.swift
