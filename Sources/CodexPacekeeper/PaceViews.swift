@@ -2,10 +2,21 @@ import CodexPacekeeperCore
 import SwiftUI
 
 struct HUDView: View {
-    let snapshot: UsageSnapshot
+    let dashboard: UsageDashboardSnapshot
+
+    init(dashboard: UsageDashboardSnapshot) {
+        self.dashboard = dashboard
+    }
+
+    init(snapshot: UsageSnapshot) {
+        self.dashboard = UsageDashboardSnapshot(
+            providers: [ProviderUsageSnapshot(provider: .codex, snapshot: snapshot)],
+            fallback: snapshot
+        )
+    }
 
     var body: some View {
-        PaceSummaryView(snapshot: snapshot)
+        PaceSummaryView(dashboard: dashboard)
             .padding(12)
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             .overlay(
@@ -17,38 +28,51 @@ struct HUDView: View {
 }
 
 struct PaceSummaryView: View {
-    let snapshot: UsageSnapshot
+    let dashboard: UsageDashboardSnapshot
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            if snapshot.hasUsageData {
-                RecommendationLine(recommendation: snapshot.paceRecommendation)
-                PaceRow(reading: snapshot.primary, now: snapshot.lastRefreshedAt)
-                PaceRow(reading: snapshot.weekly, now: snapshot.lastRefreshedAt)
+        VStack(alignment: .leading, spacing: 11) {
+            if dashboard.hasUsageData {
+                ForEach(Array(dashboard.providers.enumerated()), id: \.element.id) { index, providerSnapshot in
+                    if index > 0 {
+                        Divider()
+                            .opacity(0.6)
+                    }
+
+                    ProviderSummaryView(providerSnapshot: providerSnapshot)
+                }
             } else {
-                StatusOnlyView(snapshot: snapshot)
-            }
-
-            if snapshot.state != .fresh {
-                HStack(spacing: 6) {
-                    Circle()
-                        .fill(stateColor)
-                        .frame(width: 6, height: 6)
-                    Text(snapshot.stateLabel)
-                    Text(snapshot.lastRefreshedAt, style: .time)
-                }
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-
-                if let message = snapshot.message {
-                    Text(message)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                }
+                StatusOnlyView(snapshot: dashboard.fallback)
             }
         }
     }
+}
+
+private struct ProviderSummaryView: View {
+    let providerSnapshot: ProviderUsageSnapshot
+
+    private var snapshot: UsageSnapshot {
+        providerSnapshot.snapshot
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            ProviderRecommendationLine(
+                provider: providerSnapshot.provider,
+                recommendation: snapshot.paceRecommendation
+            )
+            PaceRow(reading: snapshot.primary, now: snapshot.lastRefreshedAt)
+            PaceRow(reading: snapshot.weekly, now: snapshot.lastRefreshedAt)
+
+            if snapshot.state != .fresh {
+                StaleStatusView(snapshot: snapshot)
+            }
+        }
+    }
+}
+
+private struct StaleStatusView: View {
+    let snapshot: UsageSnapshot
 
     private var stateColor: Color {
         switch snapshot.state {
@@ -61,6 +85,25 @@ struct PaceSummaryView: View {
         case .error:
             return .red
         }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(stateColor)
+                    .frame(width: 6, height: 6)
+                Text(snapshot.stateLabel)
+                Text(snapshot.lastRefreshedAt, style: .time)
+            }
+
+            if let message = snapshot.message {
+                Text(message)
+                    .lineLimit(2)
+            }
+        }
+        .font(.caption2)
+        .foregroundStyle(.secondary)
     }
 }
 
@@ -91,11 +134,18 @@ private struct StatusOnlyView: View {
     }
 }
 
-private struct RecommendationLine: View {
+private struct ProviderRecommendationLine: View {
+    let provider: UsageProvider
     let recommendation: PaceRecommendation
 
     var body: some View {
         HStack(spacing: 8) {
+            Text(provider.displayName.uppercased())
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .frame(width: 78, alignment: .leading)
+
             Image(systemName: recommendation.direction.systemImageName)
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.primary)

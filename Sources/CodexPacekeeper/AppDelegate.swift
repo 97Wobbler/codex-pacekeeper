@@ -5,7 +5,7 @@ import UserNotifications
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
-    @Published private(set) var snapshot = UsageSnapshot.placeholder
+    @Published private(set) var dashboard = UsageDashboardSnapshot.placeholder
     @Published private(set) var isHUDVisible: Bool = {
         if UserDefaults.standard.object(forKey: hudVisibilityDefaultsKey) == nil {
             return true
@@ -17,9 +17,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     private static let hudVisibilityDefaultsKey = "showsHUD"
     private static let hudOriginXDefaultsKey = "hudOriginX"
     private static let hudOriginYDefaultsKey = "hudOriginY"
-    private let authTokenStore = CodexAuthTokenStore()
-    private let usageClient = WhamUsageClient()
-    private let usageHistoryStore = UsageHistoryStore()
+    private static let hudWidth: CGFloat = 280
+    private static let hudSize = NSSize(width: hudWidth, height: 124)
+    private static let claudeUsageFetchInterval: TimeInterval = 3 * 60
+    private let codexAuthTokenStore = CodexAuthTokenStore()
+    private let codexUsageClient = WhamUsageClient()
+    private let codexUsageHistoryStore = UsageHistoryStore()
+    private let claudeAuthTokenStore = ClaudeAuthTokenStore()
+    private let claudeUsageClient = ClaudeUsageClient()
+    private let claudeUsageCacheStore = ClaudeUsageCacheStore()
+    private let claudeUsageHistoryStore = UsageHistoryStore(
+        fileURL: UsageHistoryStore.defaultFileURL()
+            .deletingLastPathComponent()
+            .appendingPathComponent("claude-usage-samples.json")
+    )
 
     private var hudPanel: NSPanel?
     private var hudHostingView: NSHostingView<HUDView>?
@@ -27,7 +38,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     private weak var menuBarState: MenuBarState?
     private var timer: Timer?
     private var isPaused = false
-    private var lastSuccessfulSnapshot: UsageSnapshot?
+    private var lastSuccessfulSnapshots: [UsageProvider: UsageSnapshot] = [:]
+    private var lastClaudeUsageFetchAttemptAt: Date?
     private var deliveredNotificationKeys = Set<String>()
     private lazy var notificationCenter: UNUserNotificationCenter? = {
         guard Bundle.main.bundleURL.pathExtension == "app" else {
@@ -57,8 +69,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     }
 
     func refreshUsage() {
-        if lastSuccessfulSnapshot == nil {
-            snapshot = .placeholder.withPaused(isPaused)
+        if lastSuccessfulSnapshots.isEmpty {
+            dashboard = UsageDashboardSnapshot.placeholder.withPaused(isPaused)
             updateHUD()
         }
 
@@ -69,7 +81,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
     func setPaused(_ isPaused: Bool) {
         self.isPaused = isPaused
-        snapshot = snapshot.withPaused(isPaused)
+        dashboard = dashboard.withPaused(isPaused)
 
         if isPaused {
             timer?.invalidate()
@@ -89,8 +101,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
     func setMenuBarState(_ menuBarState: MenuBarState) {
         self.menuBarState = menuBarState
-        if menuBarState.snapshot != snapshot {
-            menuBarState.snapshot = snapshot
+        if menuBarState.dashboard != dashboard {
+            menuBarState.dashboard = dashboard
         }
     }
 
@@ -118,47 +130,167 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     }
 
     private func loadUsage() async {
-        do {
-            let token = try authTokenStore.accessToken()
-            let freshSnapshot = try await usageClient.fetchSnapshot(accessToken: token)
-            recordUsageSample(for: freshSnapshot)
-            let trendedSnapshot = freshSnapshot.withTrend(usageTrend(now: freshSnapshot.lastRefreshedAt))
-            lastSuccessfulSnapshot = trendedSnapshot
-            snapshot = trendedSnapshot.withPaused(isPaused)
-            updateHUD()
-            deliverNotificationsIfNeeded(for: snapshot)
-        } catch {
-            let message = friendlyMessage(for: error)
+        async let codexResult = loadCodexUsage()
+        async let claudeResult = loadClaudeUsage()
 
-            if let lastSuccessfulSnapshot {
-                snapshot = lastSuccessfulSnapshot.markingStale(message: message).withPaused(isPaused)
-            } else {
-                snapshot = UsageSnapshot.unavailable(message: message).withPaused(isPaused)
+        let results = await [codexResult, claudeResult]
+        var providerSnapshots: [ProviderUsageSnapshot] = []
+        var messages: [String] = []
+
+        for result in results {
+            switch result {
+            case .success(let provider, let snapshot):
+                lastSuccessfulSnapshots[provider] = snapshot
+                let pausedSnapshot = snapshot.withPaused(isPaused)
+                providerSnapshots.append(ProviderUsageSnapshot(provider: provider, snapshot: pausedSnapshot))
+                deliverNotificationsIfNeeded(for: provider, snapshot: pausedSnapshot)
+            case .failure(let provider, let error):
+                let message = friendlyMessage(for: error)
+                if let lastSuccessfulSnapshot = lastSuccessfulSnapshots[provider] {
+                    providerSnapshots.append(
+                        ProviderUsageSnapshot(
+                            provider: provider,
+                            snapshot: lastSuccessfulSnapshot.markingStale(message: message).withPaused(isPaused)
+                        )
+                    )
+                } else {
+                    messages.append("\(provider.displayName): \(message)")
+                }
             }
+        }
 
-            updateHUD()
+        let sortedProviderSnapshots = providerSnapshots.sorted { lhs, rhs in
+            providerSortIndex(lhs.provider) < providerSortIndex(rhs.provider)
+        }
+
+        if sortedProviderSnapshots.isEmpty {
+            let message = messages.isEmpty ? "Usage data is unavailable" : messages.joined(separator: "\n")
+            dashboard = UsageDashboardSnapshot(
+                providers: [],
+                fallback: UsageSnapshot.unavailable(message: message).withPaused(isPaused)
+            )
+        } else {
+            dashboard = UsageDashboardSnapshot(
+                providers: sortedProviderSnapshots,
+                fallback: sortedProviderSnapshots[0].snapshot
+            )
+        }
+
+        updateHUD()
+    }
+
+    private func loadCodexUsage() async -> ProviderLoadResult {
+        do {
+            let token = try codexAuthTokenStore.accessToken()
+            let freshSnapshot = try await codexUsageClient.fetchSnapshot(accessToken: token)
+            recordUsageSample(for: freshSnapshot, provider: .codex)
+            return .success(
+                .codex,
+                freshSnapshot.withTrend(usageTrend(now: freshSnapshot.lastRefreshedAt, provider: .codex))
+            )
+        } catch {
+            return .failure(.codex, error)
         }
     }
 
-    private func usageTrend(now: Date) -> UsageTrend? {
+    private func loadClaudeUsage() async -> ProviderLoadResult {
+        if let cachedSnapshot = freshCachedClaudeSnapshot() {
+            return .success(
+                .claudeCode,
+                cachedSnapshot.withTrend(usageTrend(now: cachedSnapshot.lastRefreshedAt, provider: .claudeCode))
+            )
+        }
+
+        let now = Date()
+        if
+            let lastClaudeUsageFetchAttemptAt,
+            now.timeIntervalSince(lastClaudeUsageFetchAttemptAt) < Self.claudeUsageFetchInterval
+        {
+            if let cachedSnapshot = cachedClaudeSnapshot(message: "Using cached Claude Code usage") {
+                return .success(
+                    .claudeCode,
+                    cachedSnapshot.withTrend(usageTrend(now: cachedSnapshot.lastRefreshedAt, provider: .claudeCode))
+                )
+            }
+
+            return .failure(.claudeCode, UsageFetchThrottleError.claudeInterval)
+        }
+
+        lastClaudeUsageFetchAttemptAt = now
+
         do {
-            return try usageHistoryStore.recentTrend(now: now)
+            let token = try claudeAuthTokenStore.accessToken()
+            let freshSnapshot = try await claudeUsageClient.fetchSnapshot(accessToken: token)
+            recordUsageSample(for: freshSnapshot, provider: .claudeCode)
+            return .success(
+                .claudeCode,
+                freshSnapshot.withTrend(usageTrend(now: freshSnapshot.lastRefreshedAt, provider: .claudeCode))
+            )
         } catch {
-            NSLog("Codex Pacekeeper failed to load usage trend: \(error.localizedDescription)")
+            if let cachedSnapshot = cachedClaudeSnapshot(message: friendlyMessage(for: error)) {
+                return .success(
+                    .claudeCode,
+                    cachedSnapshot.withTrend(usageTrend(now: cachedSnapshot.lastRefreshedAt, provider: .claudeCode))
+                )
+            }
+
+            return .failure(.claudeCode, error)
+        }
+    }
+
+    private func freshCachedClaudeSnapshot() -> UsageSnapshot? {
+        do {
+            return try claudeUsageCacheStore.freshSnapshot(maxAge: Self.claudeUsageFetchInterval)
+        } catch {
             return nil
         }
     }
 
-    private func recordUsageSample(for snapshot: UsageSnapshot) {
+    private func cachedClaudeSnapshot(message: String) -> UsageSnapshot? {
         do {
-            try usageHistoryStore.record(UsageSample(snapshot: snapshot))
+            return try claudeUsageCacheStore.snapshot(message: message)
         } catch {
-            NSLog("Codex Pacekeeper failed to record usage sample: \(error.localizedDescription)")
+            return nil
+        }
+    }
+
+    private func usageTrend(now: Date, provider: UsageProvider) -> UsageTrend? {
+        do {
+            return try usageHistoryStore(for: provider).recentTrend(now: now)
+        } catch {
+            NSLog("Codex Pacekeeper failed to load \(provider.displayName) usage trend: \(error.localizedDescription)")
+            return nil
+        }
+    }
+
+    private func recordUsageSample(for snapshot: UsageSnapshot, provider: UsageProvider) {
+        do {
+            try usageHistoryStore(for: provider).record(UsageSample(snapshot: snapshot))
+        } catch {
+            NSLog("Codex Pacekeeper failed to record \(provider.displayName) usage sample: \(error.localizedDescription)")
+        }
+    }
+
+    private func usageHistoryStore(for provider: UsageProvider) -> UsageHistoryStore {
+        switch provider {
+        case .codex:
+            return codexUsageHistoryStore
+        case .claudeCode:
+            return claudeUsageHistoryStore
+        }
+    }
+
+    private func providerSortIndex(_ provider: UsageProvider) -> Int {
+        switch provider {
+        case .codex:
+            return 0
+        case .claudeCode:
+            return 1
         }
     }
 
     private func createHUD() {
-        let view = HUDView(snapshot: snapshot)
+        let view = HUDView(dashboard: dashboard)
         let hostingView = DraggableHUDHostingView(rootView: view)
         let panel = makeHUDPanel(frame: initialHUDFrame(), hostingView: hostingView)
         NotificationCenter.default.addObserver(
@@ -174,19 +306,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     }
 
     private func createDemoHUDs() {
-        let snapshots = DemoUsageSnapshots.make()
-        let panelSize = NSSize(width: 280, height: 120)
+        let dashboards = DemoUsageSnapshots.make()
+        let panelSize = NSSize(width: Self.hudWidth, height: 250)
         let visibleFrame = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 900, height: 800)
         let startX = visibleFrame.minX + 80
         var y = visibleFrame.maxY - panelSize.height - 60
 
-        demoPanels = snapshots.map { snapshot in
+        demoPanels = dashboards.map { dashboard in
+            let size = hudSize(for: dashboard)
             let panel = makeHUDPanel(
-                frame: NSRect(x: startX, y: y, width: panelSize.width, height: panelSize.height),
-                hostingView: DraggableHUDHostingView(rootView: HUDView(snapshot: snapshot))
+                frame: NSRect(x: startX, y: y, width: size.width, height: size.height),
+                hostingView: DraggableHUDHostingView(rootView: HUDView(dashboard: dashboard))
             )
             panel.orderFrontRegardless()
-            y -= panelSize.height + 14
+            y -= size.height + 14
             return panel
         }
     }
@@ -213,7 +346,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     }
 
     private func initialHUDFrame() -> NSRect {
-        let size = NSSize(width: 280, height: 120)
+        let size = Self.hudSize
 
         if
             UserDefaults.standard.object(forKey: Self.hudOriginXDefaultsKey) != nil,
@@ -239,6 +372,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         return NSRect(x: 80, y: 640, width: size.width, height: size.height)
     }
 
+    private func hudSize(for dashboard: UsageDashboardSnapshot) -> NSSize {
+        guard dashboard.providers.count > 0 else {
+            return Self.hudSize
+        }
+
+        let staleCount = dashboard.providers.filter { $0.snapshot.state != .fresh }.count
+        let baseHeight: CGFloat = dashboard.providers.count == 1 ? 124 : 250
+        return NSSize(width: Self.hudWidth, height: baseHeight + CGFloat(staleCount * 30))
+    }
+
+    private func resizeHUDIfNeeded() {
+        guard let hudPanel else {
+            return
+        }
+
+        let size = hudSize(for: dashboard)
+        guard hudPanel.frame.size != size else {
+            return
+        }
+
+        let frame = hudPanel.frame
+        let resizedFrame = NSRect(
+            x: frame.minX,
+            y: frame.maxY - size.height,
+            width: size.width,
+            height: size.height
+        )
+        hudPanel.setFrame(resizedFrame, display: true)
+    }
+
     @objc private func hudPanelDidMove(_ notification: Notification) {
         guard let panel = notification.object as? NSPanel else {
             return
@@ -249,29 +412,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     }
 
     private func updateHUD() {
-        hudHostingView?.rootView = HUDView(snapshot: snapshot)
-        menuBarState?.snapshot = snapshot
+        hudHostingView?.rootView = HUDView(dashboard: dashboard)
+        resizeHUDIfNeeded()
+        menuBarState?.dashboard = dashboard
     }
 
     private func requestNotificationAuthorization() {
         notificationCenter?.requestAuthorization(options: [.alert, .sound]) { _, _ in }
     }
 
-    private func deliverNotificationsIfNeeded(for snapshot: UsageSnapshot) {
+    private func deliverNotificationsIfNeeded(for provider: UsageProvider, snapshot: UsageSnapshot) {
         guard snapshot.state == .fresh, !snapshot.primary.isPaused else {
             return
         }
 
-        deliverNotificationIfNeeded(for: snapshot.primary)
-        deliverNotificationIfNeeded(for: snapshot.weekly)
+        deliverNotificationIfNeeded(for: snapshot.primary, provider: provider)
+        deliverNotificationIfNeeded(for: snapshot.weekly, provider: provider)
     }
 
-    private func deliverNotificationIfNeeded(for reading: PaceReading) {
+    private func deliverNotificationIfNeeded(for reading: PaceReading, provider: UsageProvider) {
         guard reading.status == .threshold || reading.status == .redline else {
             return
         }
 
-        let key = "\(reading.label)-\(reading.status.rawValue)-\(Int(reading.resetAt.timeIntervalSince1970))"
+        let key = "\(provider.rawValue)-\(reading.label)-\(reading.status.rawValue)-\(Int(reading.resetAt.timeIntervalSince1970))"
         guard !deliveredNotificationKeys.contains(key) else {
             return
         }
@@ -279,7 +443,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         deliveredNotificationKeys.insert(key)
 
         let content = UNMutableNotificationContent()
-        content.title = reading.status == .redline ? "Redline pace" : "Ease up to stay on pace"
+        content.title = reading.status == .redline ? "\(provider.displayName) redline pace" : "\(provider.displayName) pace warning"
         content.body = "\(reading.label) \(reading.deltaPercentagePoints.signedRoundedPercentPoints) · \(reading.guidance)"
         content.sound = reading.status == .redline ? .default : nil
 
@@ -306,6 +470,22 @@ private final class DraggableHUDPanel: NSPanel {}
 private final class DraggableHUDHostingView: NSHostingView<HUDView> {
     override func mouseDown(with event: NSEvent) {
         window?.performDrag(with: event)
+    }
+}
+
+private enum ProviderLoadResult {
+    case success(UsageProvider, UsageSnapshot)
+    case failure(UsageProvider, Error)
+}
+
+private enum UsageFetchThrottleError: LocalizedError {
+    case claudeInterval
+
+    var errorDescription: String? {
+        switch self {
+        case .claudeInterval:
+            return "Waiting for the next Claude Code usage refresh"
+        }
     }
 }
 
