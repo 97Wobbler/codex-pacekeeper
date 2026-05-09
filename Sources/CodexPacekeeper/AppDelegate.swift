@@ -23,6 +23,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
     private var hudPanel: NSPanel?
     private var hudHostingView: NSHostingView<HUDView>?
+    private var demoPanels: [NSPanel] = []
     private var timer: Timer?
     private var isPaused = false
     private var lastSuccessfulSnapshot: UsageSnapshot?
@@ -37,6 +38,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApplication.shared.setActivationPolicy(.accessory)
+
+        if CommandLine.arguments.contains("--demo-huds") {
+            createDemoHUDs()
+            return
+        }
+
         createHUD()
         requestNotificationAuthorization()
         refreshUsage()
@@ -145,9 +152,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     private func createHUD() {
         let view = HUDView(snapshot: snapshot)
         let hostingView = DraggableHUDHostingView(rootView: view)
+        let panel = makeHUDPanel(frame: initialHUDFrame(), hostingView: hostingView)
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(hudPanelDidMove),
+            name: NSWindow.didMoveNotification,
+            object: panel
+        )
 
+        hudHostingView = hostingView
+        hudPanel = panel
+        applyHUDVisibility()
+    }
+
+    private func createDemoHUDs() {
+        let snapshots = DemoUsageSnapshots.make()
+        let panelSize = NSSize(width: 280, height: 120)
+        let visibleFrame = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 900, height: 800)
+        let startX = visibleFrame.minX + 80
+        var y = visibleFrame.maxY - panelSize.height - 60
+
+        demoPanels = snapshots.map { snapshot in
+            let panel = makeHUDPanel(
+                frame: NSRect(x: startX, y: y, width: panelSize.width, height: panelSize.height),
+                hostingView: DraggableHUDHostingView(rootView: HUDView(snapshot: snapshot))
+            )
+            panel.orderFrontRegardless()
+            y -= panelSize.height + 14
+            return panel
+        }
+    }
+
+    private func makeHUDPanel(frame: NSRect, hostingView: DraggableHUDHostingView) -> NSPanel {
         let panel = DraggableHUDPanel(
-            contentRect: initialHUDFrame(),
+            contentRect: frame,
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -162,16 +200,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         panel.isReleasedWhenClosed = false
         panel.isMovableByWindowBackground = true
         panel.contentView = hostingView
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(hudPanelDidMove),
-            name: NSWindow.didMoveNotification,
-            object: panel
-        )
 
-        hudHostingView = hostingView
-        hudPanel = panel
-        applyHUDVisibility()
+        return panel
     }
 
     private func initialHUDFrame() -> NSRect {

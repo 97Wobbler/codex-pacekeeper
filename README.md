@@ -38,6 +38,12 @@ Run the app during development:
 swift run CodexPacekeeper
 ```
 
+Run fixed visual QA scenarios without auth/API polling:
+
+```sh
+swift run CodexPacekeeper -- --demo-huds
+```
+
 ## MVP Direction
 
 Remaining MVP work:

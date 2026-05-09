@@ -98,7 +98,7 @@ private struct RecommendationLine: View {
         HStack(spacing: 8) {
             Image(systemName: recommendation.direction.systemImageName)
                 .font(.subheadline.weight(.semibold))
-                .foregroundStyle(directionColor)
+                .foregroundStyle(.primary)
                 .frame(width: 18)
 
             Text(recommendation.action)
@@ -110,17 +110,6 @@ private struct RecommendationLine: View {
         }
     }
 
-    private var directionColor: Color {
-        switch recommendation.direction {
-        case .speedUp:
-            return .orange
-        case .hold:
-            return .green
-        case .slowDown:
-            return .cyan
-        }
-    }
-
     private var statusColor: Color {
         switch recommendation.status {
         case .easy:
@@ -128,7 +117,7 @@ private struct RecommendationLine: View {
         case .steady:
             return .green
         case .tempo:
-            return .yellow
+            return .orange
         case .threshold:
             return .orange
         case .redline:
@@ -241,7 +230,7 @@ private extension PaceStatus {
         case .steady:
             return .green
         case .tempo:
-            return .yellow
+            return .orange
         case .threshold:
             return .orange
         case .redline:
