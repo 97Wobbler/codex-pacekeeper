@@ -4,7 +4,7 @@ import SwiftUI
 struct CodexPacekeeperApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var isPaused = false
-    @State private var showsHUD = true
+    @AppStorage("showsHUD") private var showsHUD = true
 
     var body: some Scene {
         MenuBarExtra(menuBarTitle, systemImage: menuBarIcon) {

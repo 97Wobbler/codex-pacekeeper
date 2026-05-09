@@ -6,7 +6,15 @@ import UserNotifications
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     @Published private(set) var snapshot = UsageSnapshot.placeholder
+    @Published private(set) var isHUDVisible: Bool = {
+        if UserDefaults.standard.object(forKey: hudVisibilityDefaultsKey) == nil {
+            return true
+        }
 
+        return UserDefaults.standard.bool(forKey: hudVisibilityDefaultsKey)
+    }()
+
+    private static let hudVisibilityDefaultsKey = "showsHUD"
     private let authTokenStore = CodexAuthTokenStore()
     private let usageClient = WhamUsageClient()
 
@@ -62,7 +70,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     }
 
     func setHUDVisible(_ isVisible: Bool) {
-        if isVisible {
+        isHUDVisible = isVisible
+        UserDefaults.standard.set(isVisible, forKey: Self.hudVisibilityDefaultsKey)
+        applyHUDVisibility()
+    }
+
+    private func applyHUDVisibility() {
+        if isHUDVisible {
             hudPanel?.orderFrontRegardless()
         } else {
             hudPanel?.orderOut(nil)
@@ -122,11 +136,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         panel.backgroundColor = .clear
         panel.isOpaque = false
         panel.hasShadow = true
+        panel.isReleasedWhenClosed = false
         panel.contentView = hostingView
-        panel.orderFrontRegardless()
 
         hudHostingView = hostingView
         hudPanel = panel
+        applyHUDVisibility()
     }
 
     private func updateHUD() {
