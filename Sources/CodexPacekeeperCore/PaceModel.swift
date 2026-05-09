@@ -56,7 +56,7 @@ public struct PaceReading: Equatable {
 
         switch status {
         case .easy:
-            return "Room to move"
+            return "Pick up pace"
         case .steady:
             return "Hold this pace"
         case .tempo:
@@ -66,6 +66,20 @@ public struct PaceReading: Equatable {
         case .redline:
             return "Short efforts only"
         }
+    }
+
+    public var paceLabel: String {
+        let points = Int(abs(deltaPercentagePoints).rounded())
+
+        if deltaPercentagePoints <= -10 {
+            return "\(points)pp behind target"
+        }
+
+        if deltaPercentagePoints > 10 {
+            return "\(points)pp ahead of target"
+        }
+
+        return "On target"
     }
 
     public func withPaused(_ paused: Bool) -> PaceReading {

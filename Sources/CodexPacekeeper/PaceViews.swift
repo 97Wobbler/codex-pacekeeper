@@ -28,21 +28,23 @@ struct PaceSummaryView: View {
                 StatusOnlyView(snapshot: snapshot)
             }
 
-            HStack(spacing: 6) {
-                Circle()
-                    .fill(stateColor)
-                    .frame(width: 6, height: 6)
-                Text(snapshot.stateLabel)
-                Text(snapshot.lastRefreshedAt, style: .time)
-            }
-            .font(.caption2)
-            .foregroundStyle(.secondary)
+            if snapshot.state != .fresh {
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(stateColor)
+                        .frame(width: 6, height: 6)
+                    Text(snapshot.stateLabel)
+                    Text(snapshot.lastRefreshedAt, style: .time)
+                }
+                .font(.caption2)
+                .foregroundStyle(.secondary)
 
-            if let message = snapshot.message {
-                Text(message)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
+                if let message = snapshot.message {
+                    Text(message)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
             }
         }
     }
@@ -93,26 +95,28 @@ private struct PaceRow: View {
     let isPrimary: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
+        VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text(reading.label)
-                    .font(isPrimary ? .headline : .subheadline)
-                    .monospacedDigit()
+                Text(reading.label.uppercased())
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .monospaced()
+                    .frame(width: 34, alignment: .leading)
 
-                Text(reading.deltaPercentagePoints.signedRoundedPercentPoints)
-                    .font(isPrimary ? .headline : .subheadline)
-                    .monospacedDigit()
+                Text(reading.guidance)
+                    .font(.subheadline.weight(isPrimary ? .semibold : .medium))
 
                 Spacer()
 
-                Text(reading.guidance)
-                    .font(.caption)
+                Text(reading.paceLabel)
+                    .font(.caption2.weight(.medium))
                     .foregroundStyle(.secondary)
+                    .monospacedDigit()
             }
 
             GaugeBar(reading: reading)
 
-            Text("\(reading.actualPercent.roundedPercent) actual / \(reading.recommendedPercent.roundedPercent) pace")
+            Text("\(reading.actualPercent.roundedPercent) used · \(reading.recommendedPercent.roundedPercent) target")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .monospacedDigit()
@@ -169,8 +173,4 @@ private extension Double {
         "\(Int(rounded()))%"
     }
 
-    var signedRoundedPercentPoints: String {
-        let roundedValue = Int(rounded())
-        return roundedValue >= 0 ? "+\(roundedValue) ahead" : "\(roundedValue) behind"
-    }
 }
