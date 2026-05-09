@@ -142,6 +142,10 @@ public struct UsageSnapshot: Equatable {
         state == .stale
     }
 
+    public var hasUsageData: Bool {
+        state == .fresh || state == .stale
+    }
+
     public var menuBarTitle: String {
         switch state {
         case .loading:
@@ -185,14 +189,14 @@ public struct UsageSnapshot: Equatable {
         return UsageSnapshot(
             primary: UsageWindow(
                 label: "5h",
-                usedPercent: 42,
-                resetAt: now.addingTimeInterval(3 * 60 * 60),
+                usedPercent: 0,
+                resetAt: now.addingTimeInterval(fiveHours),
                 limitWindowSeconds: fiveHours
             ).pace(at: now),
             weekly: UsageWindow(
                 label: "week",
-                usedPercent: 44,
-                resetAt: now.addingTimeInterval(2 * 24 * 60 * 60),
+                usedPercent: 0,
+                resetAt: now.addingTimeInterval(week),
                 limitWindowSeconds: week
             ).pace(at: now),
             lastRefreshedAt: now,

@@ -21,8 +21,12 @@ struct PaceSummaryView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            PaceRow(reading: snapshot.primary, isPrimary: true)
-            PaceRow(reading: snapshot.weekly, isPrimary: false)
+            if snapshot.hasUsageData {
+                PaceRow(reading: snapshot.primary, isPrimary: true)
+                PaceRow(reading: snapshot.weekly, isPrimary: false)
+            } else {
+                StatusOnlyView(snapshot: snapshot)
+            }
 
             HStack(spacing: 6) {
                 Circle()
@@ -54,6 +58,33 @@ struct PaceSummaryView: View {
         case .error:
             return .red
         }
+    }
+}
+
+private struct StatusOnlyView: View {
+    let snapshot: UsageSnapshot
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: snapshot.stateSystemImageName)
+                .font(.title3)
+                .foregroundStyle(.secondary)
+                .frame(width: 24)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(snapshot.stateLabel.capitalized)
+                    .font(.headline)
+
+                if let message = snapshot.message {
+                    Text(message)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 4)
     }
 }
 
