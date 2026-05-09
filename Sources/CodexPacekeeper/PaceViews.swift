@@ -103,6 +103,7 @@ private struct RecommendationLine: View {
 
             Text(recommendation.action)
                 .font(.subheadline.weight(.semibold))
+                .foregroundStyle(statusColor)
                 .lineLimit(1)
 
             Spacer(minLength: 0)
@@ -134,10 +135,15 @@ private struct PaceRow: View {
             GridRow {
                 WindowLabel(text: reading.label)
 
-                Text("\(reading.actualPercent.roundedPercent) used · \(reading.recommendedPercent.roundedPercent) target · reset \(reading.resetTimeRemaining(from: now))")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
+                HStack(spacing: 0) {
+                    Text(reading.actualPercent.roundedPercent)
+                        .foregroundStyle(statusColor)
+                        .fontWeight(.semibold)
+                    Text(" used · \(reading.recommendedPercent.roundedPercent) target · reset \(reading.resetTimeRemaining(from: now))")
+                        .foregroundStyle(.secondary)
+                }
+                .font(.caption2)
+                .monospacedDigit()
             }
 
             GridRow {
@@ -193,9 +199,21 @@ private struct GaugeBar: View {
     }
 
     private var statusColor: Color {
-        switch reading.status {
+        reading.status.hudColor
+    }
+}
+
+private extension PaceRow {
+    var statusColor: Color {
+        reading.status.hudColor
+    }
+}
+
+private extension PaceStatus {
+    var hudColor: Color {
+        switch self {
         case .easy:
-            return .blue
+            return .orange
         case .steady:
             return .green
         case .tempo:

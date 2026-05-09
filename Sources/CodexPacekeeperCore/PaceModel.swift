@@ -76,6 +76,23 @@ public struct PaceReading: Equatable {
             return "Paused"
         }
 
+        if status == .steady {
+            return "Hold this pace"
+        }
+
+        if deltaPercentagePoints < 0 {
+            switch status {
+            case .easy, .tempo:
+                return "Pick up pace"
+            case .threshold:
+                return "Push harder"
+            case .redline:
+                return "Use more now"
+            case .steady:
+                return "Hold this pace"
+            }
+        }
+
         switch status {
         case .easy:
             return "Pick up pace"
@@ -115,18 +132,24 @@ public struct PaceRecommendation: Equatable {
             return
         }
 
-        if weekly.actualPercent >= 90 || weekly.status == .redline {
+        if weekly.actualPercent >= 90 || weekly.deltaPercentagePoints > 35 {
             self.init(action: "Short efforts only", status: .redline)
             return
         }
 
-        if weekly.status == .threshold {
+        if weekly.deltaPercentagePoints > 20 {
             self.init(action: "Taper recommended", status: .threshold)
             return
         }
 
-        if weekly.status == .easy && primary.status != .redline {
-            self.init(primary: primary, weekly: weekly, action: "Pick up pace", status: .easy, trend: trend)
+        if weekly.deltaPercentagePoints > 10 {
+            self.init(primary: primary, weekly: weekly, action: "Ease up soon", status: .tempo, trend: trend)
+            return
+        }
+
+        if weekly.deltaPercentagePoints < -10 && primary.deltaPercentagePoints < 35 {
+            let behindReading = abs(weekly.deltaPercentagePoints) > abs(primary.deltaPercentagePoints) ? weekly : primary
+            self.init(primary: primary, weekly: weekly, action: behindReading.guidance, status: behindReading.status, trend: trend)
             return
         }
 
@@ -190,20 +213,18 @@ public enum PaceStatus: String, Equatable {
     case redline
 
     public static func status(forActualPercent actualPercent: Double, deltaPercentagePoints delta: Double) -> PaceStatus {
-        if delta > 35 || actualPercent >= 90 {
+        let distance = abs(delta)
+
+        if distance > 35 || actualPercent >= 90 {
             return .redline
         }
 
-        if delta > 20 {
+        if distance > 20 {
             return .threshold
         }
 
-        if delta > 10 {
+        if distance > 10 {
             return .tempo
-        }
-
-        if delta <= -10 {
-            return .easy
         }
 
         return .steady

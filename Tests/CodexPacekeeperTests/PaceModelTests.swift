@@ -22,11 +22,14 @@ final class PaceModelTests: XCTestCase {
     }
 
     func testPaceStatusThresholds() {
-        XCTAssertEqual(PaceStatus.status(forActualPercent: 10, deltaPercentagePoints: -10), .easy)
+        XCTAssertEqual(PaceStatus.status(forActualPercent: 10, deltaPercentagePoints: -10), .steady)
         XCTAssertEqual(PaceStatus.status(forActualPercent: 20, deltaPercentagePoints: 10), .steady)
         XCTAssertEqual(PaceStatus.status(forActualPercent: 30, deltaPercentagePoints: 11), .tempo)
+        XCTAssertEqual(PaceStatus.status(forActualPercent: 30, deltaPercentagePoints: -11), .tempo)
         XCTAssertEqual(PaceStatus.status(forActualPercent: 45, deltaPercentagePoints: 21), .threshold)
+        XCTAssertEqual(PaceStatus.status(forActualPercent: 45, deltaPercentagePoints: -21), .threshold)
         XCTAssertEqual(PaceStatus.status(forActualPercent: 55, deltaPercentagePoints: 36), .redline)
+        XCTAssertEqual(PaceStatus.status(forActualPercent: 55, deltaPercentagePoints: -36), .redline)
         XCTAssertEqual(PaceStatus.status(forActualPercent: 90, deltaPercentagePoints: 0), .redline)
     }
 
@@ -68,12 +71,22 @@ final class PaceModelTests: XCTestCase {
 
     func testBothWindowsBehindRecommendPickingUpPace() {
         let recommendation = PaceRecommendation(
-            primary: reading(actual: 20, recommended: 50),
-            weekly: reading(actual: 35, recommended: 50)
+            primary: reading(actual: 38, recommended: 50),
+            weekly: reading(actual: 38, recommended: 50)
         )
 
         XCTAssertEqual(recommendation.action, "Pick up pace")
-        XCTAssertEqual(recommendation.status, .easy)
+        XCTAssertEqual(recommendation.status, .tempo)
+    }
+
+    func testFarBehindTargetEscalatesRecommendationSeverity() {
+        let recommendation = PaceRecommendation(
+            primary: reading(actual: 10, recommended: 50),
+            weekly: reading(actual: 10, recommended: 50)
+        )
+
+        XCTAssertEqual(recommendation.action, "Use more now")
+        XCTAssertEqual(recommendation.status, .redline)
     }
 
     func testNormalWeeklyStateLetsFiveHourTempoRecommendEasingUp() {
