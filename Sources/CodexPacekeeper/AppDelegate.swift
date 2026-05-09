@@ -15,6 +15,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     }()
 
     private static let hudVisibilityDefaultsKey = "showsHUD"
+    private static let hudOriginXDefaultsKey = "hudOriginX"
+    private static let hudOriginYDefaultsKey = "hudOriginY"
     private let authTokenStore = CodexAuthTokenStore()
     private let usageClient = WhamUsageClient()
 
@@ -42,6 +44,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
     func applicationWillTerminate(_ notification: Notification) {
         timer?.invalidate()
+        NotificationCenter.default.removeObserver(self)
     }
 
     func refreshUsage() {
@@ -121,10 +124,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
     private func createHUD() {
         let view = HUDView(snapshot: snapshot)
-        let hostingView = NSHostingView(rootView: view)
+        let hostingView = DraggableHUDHostingView(rootView: view)
 
-        let panel = NSPanel(
-            contentRect: NSRect(x: 80, y: 640, width: 280, height: 120),
+        let panel = DraggableHUDPanel(
+            contentRect: initialHUDFrame(),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -137,11 +140,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         panel.isOpaque = false
         panel.hasShadow = true
         panel.isReleasedWhenClosed = false
+        panel.isMovableByWindowBackground = true
         panel.contentView = hostingView
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(hudPanelDidMove),
+            name: NSWindow.didMoveNotification,
+            object: panel
+        )
 
         hudHostingView = hostingView
         hudPanel = panel
         applyHUDVisibility()
+    }
+
+    private func initialHUDFrame() -> NSRect {
+        let size = NSSize(width: 280, height: 120)
+
+        if
+            UserDefaults.standard.object(forKey: Self.hudOriginXDefaultsKey) != nil,
+            UserDefaults.standard.object(forKey: Self.hudOriginYDefaultsKey) != nil
+        {
+            return NSRect(
+                x: UserDefaults.standard.double(forKey: Self.hudOriginXDefaultsKey),
+                y: UserDefaults.standard.double(forKey: Self.hudOriginYDefaultsKey),
+                width: size.width,
+                height: size.height
+            )
+        }
+
+        if let visibleFrame = NSScreen.main?.visibleFrame {
+            return NSRect(
+                x: visibleFrame.minX + 80,
+                y: visibleFrame.maxY - size.height - 80,
+                width: size.width,
+                height: size.height
+            )
+        }
+
+        return NSRect(x: 80, y: 640, width: size.width, height: size.height)
+    }
+
+    @objc private func hudPanelDidMove(_ notification: Notification) {
+        guard let panel = notification.object as? NSPanel else {
+            return
+        }
+
+        UserDefaults.standard.set(panel.frame.origin.x, forKey: Self.hudOriginXDefaultsKey)
+        UserDefaults.standard.set(panel.frame.origin.y, forKey: Self.hudOriginYDefaultsKey)
     }
 
     private func updateHUD() {
@@ -193,6 +239,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         }
 
         return error.localizedDescription
+    }
+}
+
+private final class DraggableHUDPanel: NSPanel {}
+
+private final class DraggableHUDHostingView: NSHostingView<HUDView> {
+    override func mouseDown(with event: NSEvent) {
+        window?.performDrag(with: event)
     }
 }
 
