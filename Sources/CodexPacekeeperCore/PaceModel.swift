@@ -126,6 +126,17 @@ public struct PaceRecommendation: Equatable {
         case speedUp
         case hold
         case slowDown
+
+        public var systemImageName: String {
+            switch self {
+            case .speedUp:
+                return "flame.fill"
+            case .hold:
+                return "figure.run"
+            case .slowDown:
+                return "snowflake"
+            }
+        }
     }
 
     public let action: String
@@ -338,7 +349,7 @@ public struct UsageSnapshot: Equatable {
         case .error:
             return "questionmark.circle"
         case .fresh, .stale:
-            return primary.status.systemImageName
+            return paceRecommendation.direction.systemImageName
         }
     }
 

@@ -24,6 +24,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     private var hudPanel: NSPanel?
     private var hudHostingView: NSHostingView<HUDView>?
     private var demoPanels: [NSPanel] = []
+    private weak var menuBarState: MenuBarState?
     private var timer: Timer?
     private var isPaused = false
     private var lastSuccessfulSnapshot: UsageSnapshot?
@@ -84,6 +85,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         isHUDVisible = isVisible
         UserDefaults.standard.set(isVisible, forKey: Self.hudVisibilityDefaultsKey)
         applyHUDVisibility()
+    }
+
+    func setMenuBarState(_ menuBarState: MenuBarState) {
+        self.menuBarState = menuBarState
+        if menuBarState.snapshot != snapshot {
+            menuBarState.snapshot = snapshot
+        }
     }
 
     private func applyHUDVisibility() {
@@ -242,6 +250,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
     private func updateHUD() {
         hudHostingView?.rootView = HUDView(snapshot: snapshot)
+        menuBarState?.snapshot = snapshot
     }
 
     private func requestNotificationAuthorization() {

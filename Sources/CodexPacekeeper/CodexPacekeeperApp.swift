@@ -1,28 +1,21 @@
+import CodexPacekeeperCore
 import SwiftUI
+
+@MainActor
+final class MenuBarState: ObservableObject {
+    @Published var snapshot = UsageSnapshot.placeholder
+}
 
 @main
 struct CodexPacekeeperApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @State private var isPaused = false
+    @StateObject private var menuBarState = MenuBarState()
     @AppStorage("showsHUD") private var showsHUD = true
 
     var body: some Scene {
-        MenuBarExtra(menuBarTitle, systemImage: menuBarIcon) {
-            PaceSummaryView(snapshot: appDelegate.snapshot)
-                .frame(width: 260)
-                .padding(.vertical, 8)
+        appDelegate.setMenuBarState(menuBarState)
 
-            Divider()
-
-            Button("Refresh Now") {
-                appDelegate.refreshUsage()
-            }
-
-            Toggle("Pause", isOn: $isPaused)
-                .onChange(of: isPaused) { newValue in
-                    appDelegate.setPaused(newValue)
-                }
-
+        return MenuBarExtra(menuBarTitle, systemImage: menuBarIcon) {
             Toggle("Show HUD", isOn: hudVisibilityBinding)
 
             Divider()
@@ -35,11 +28,11 @@ struct CodexPacekeeperApp: App {
     }
 
     private var menuBarTitle: String {
-        appDelegate.snapshot.menuBarTitle
+        menuBarState.snapshot.menuBarTitle
     }
 
     private var menuBarIcon: String {
-        appDelegate.snapshot.stateSystemImageName
+        menuBarState.snapshot.stateSystemImageName
     }
 
     private var hudVisibilityBinding: Binding<Bool> {

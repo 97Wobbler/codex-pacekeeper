@@ -126,19 +126,6 @@ private struct RecommendationLine: View {
     }
 }
 
-private extension PaceRecommendation.Direction {
-    var systemImageName: String {
-        switch self {
-        case .speedUp:
-            return "flame.fill"
-        case .hold:
-            return "figure.run"
-        case .slowDown:
-            return "snowflake"
-        }
-    }
-}
-
 private struct PaceRow: View {
     let reading: PaceReading
     let now: Date
