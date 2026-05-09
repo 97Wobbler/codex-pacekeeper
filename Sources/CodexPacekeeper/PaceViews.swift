@@ -95,27 +95,50 @@ private struct PaceRow: View {
     let isPrimary: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text(reading.label.uppercased())
-                    .font(.caption2.weight(.medium))
-                    .foregroundStyle(.secondary)
-                    .monospaced()
-                    .frame(width: 34, alignment: .leading)
+        Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: 5) {
+            GridRow {
+                WindowLabel(text: reading.label)
 
-                Text(reading.guidance)
-                    .font(.subheadline.weight(isPrimary ? .semibold : .medium))
+                HStack {
+                    Text(reading.guidance)
+                        .font(.subheadline.weight(isPrimary ? .semibold : .medium))
+                        .lineLimit(1)
 
-                Spacer()
+                    Spacer()
+                }
             }
 
-            GaugeBar(reading: reading)
+            GridRow {
+                Color.clear
+                    .frame(width: WindowLabel.width, height: 1)
 
-            Text("\(reading.actualPercent.roundedPercent) used · \(reading.recommendedPercent.roundedPercent) target")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .monospacedDigit()
+                GaugeBar(reading: reading)
+            }
+
+            GridRow {
+                Color.clear
+                    .frame(width: WindowLabel.width, height: 1)
+
+                Text("\(reading.actualPercent.roundedPercent) used · \(reading.recommendedPercent.roundedPercent) target")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
         }
+    }
+}
+
+private struct WindowLabel: View {
+    static let width: CGFloat = 30
+
+    let text: String
+
+    var body: some View {
+        Text(text.uppercased())
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(.secondary)
+            .monospaced()
+            .frame(width: Self.width, alignment: .trailing)
     }
 }
 
