@@ -122,23 +122,30 @@ public struct PaceReading: Equatable {
 }
 
 public struct PaceRecommendation: Equatable {
+    public enum Direction: Equatable {
+        case speedUp
+        case hold
+        case slowDown
+    }
+
     public let action: String
     public let guidance: String
     public let status: PaceStatus
+    public let direction: Direction
 
     public init(primary: PaceReading, weekly: PaceReading, trend: UsageTrend? = nil) {
         if primary.isPaused || weekly.isPaused {
-            self.init(action: "Paused", status: .steady)
+            self.init(action: "Paused", status: .steady, direction: .hold)
             return
         }
 
         if weekly.actualPercent >= 90 || weekly.deltaPercentagePoints > 35 {
-            self.init(action: "Short efforts only", status: .redline)
+            self.init(action: "Short efforts only", status: .redline, direction: .slowDown)
             return
         }
 
         if weekly.deltaPercentagePoints > 20 {
-            self.init(action: "Taper recommended", status: .threshold)
+            self.init(action: "Taper recommended", status: .threshold, direction: .slowDown)
             return
         }
 
@@ -156,15 +163,18 @@ public struct PaceRecommendation: Equatable {
         self.init(primary: primary, weekly: weekly, action: primary.guidance, status: primary.status, trend: trend)
     }
 
-    private init(action: String, status: PaceStatus) {
+    private init(action: String, status: PaceStatus, direction: Direction) {
         self.action = action
         self.guidance = action
         self.status = status
+        self.direction = direction
     }
 
     private init(primary: PaceReading, weekly: PaceReading, action: String, status: PaceStatus, trend: UsageTrend?) {
+        let direction = PaceRecommendation.direction(for: action, status: status)
+
         guard let trend else {
-            self.init(action: action, status: status)
+            self.init(action: action, status: status, direction: direction)
             return
         }
 
@@ -178,23 +188,38 @@ public struct PaceRecommendation: Equatable {
         if sharplyIncreasingBurn {
             switch status {
             case .easy:
-                self.init(action: "Hold this pace", status: .steady)
+                self.init(action: "Hold this pace", status: .steady, direction: .hold)
             case .steady:
-                self.init(action: "Ease up soon", status: .tempo)
+                self.init(action: "Ease up soon", status: .tempo, direction: .slowDown)
             case .tempo:
-                self.init(action: "Taper recommended", status: .threshold)
+                self.init(action: "Taper recommended", status: .threshold, direction: .slowDown)
             case .threshold, .redline:
-                self.init(action: action, status: status)
+                self.init(action: action, status: status, direction: direction)
             }
             return
         }
 
         if primary.deltaPercentagePoints <= -5 && primaryRate <= expectedPrimaryRate * 0.1 {
-            self.init(action: "Pick up pace", status: .easy)
+            self.init(action: "Pick up pace", status: .easy, direction: .speedUp)
             return
         }
 
-        self.init(action: action, status: status)
+        self.init(action: action, status: status, direction: direction)
+    }
+
+    private static func direction(for action: String, status: PaceStatus) -> Direction {
+        if status == .steady || action == "Paused" {
+            return .hold
+        }
+
+        switch action {
+        case "Pick up pace", "Push harder", "Use more now":
+            return .speedUp
+        case "Ease up soon", "Taper recommended", "Short efforts only":
+            return .slowDown
+        default:
+            return .hold
+        }
     }
 }
 

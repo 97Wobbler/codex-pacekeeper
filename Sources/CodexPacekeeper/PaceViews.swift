@@ -96,9 +96,9 @@ private struct RecommendationLine: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Image(systemName: recommendation.status.systemImageName)
+            Image(systemName: recommendation.direction.systemImageName)
                 .font(.subheadline.weight(.semibold))
-                .foregroundStyle(statusColor)
+                .foregroundStyle(directionColor)
                 .frame(width: 18)
 
             Text(recommendation.action)
@@ -110,10 +110,21 @@ private struct RecommendationLine: View {
         }
     }
 
+    private var directionColor: Color {
+        switch recommendation.direction {
+        case .speedUp:
+            return .orange
+        case .hold:
+            return .green
+        case .slowDown:
+            return .cyan
+        }
+    }
+
     private var statusColor: Color {
         switch recommendation.status {
         case .easy:
-            return .blue
+            return .orange
         case .steady:
             return .green
         case .tempo:
@@ -122,6 +133,19 @@ private struct RecommendationLine: View {
             return .orange
         case .redline:
             return .red
+        }
+    }
+}
+
+private extension PaceRecommendation.Direction {
+    var systemImageName: String {
+        switch self {
+        case .speedUp:
+            return "flame.fill"
+        case .hold:
+            return "figure.run"
+        case .slowDown:
+            return "snowflake"
         }
     }
 }

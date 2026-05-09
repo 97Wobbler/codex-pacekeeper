@@ -57,6 +57,7 @@ final class PaceModelTests: XCTestCase {
 
         XCTAssertEqual(recommendation.action, "Short efforts only")
         XCTAssertEqual(recommendation.status, .redline)
+        XCTAssertEqual(recommendation.direction, .slowDown)
     }
 
     func testWeekThresholdAheadOverridesFiveHourBehindRecommendation() {
@@ -77,6 +78,7 @@ final class PaceModelTests: XCTestCase {
 
         XCTAssertEqual(recommendation.action, "Pick up pace")
         XCTAssertEqual(recommendation.status, .tempo)
+        XCTAssertEqual(recommendation.direction, .speedUp)
     }
 
     func testFarBehindTargetEscalatesRecommendationSeverity() {
@@ -87,6 +89,7 @@ final class PaceModelTests: XCTestCase {
 
         XCTAssertEqual(recommendation.action, "Use more now")
         XCTAssertEqual(recommendation.status, .redline)
+        XCTAssertEqual(recommendation.direction, .speedUp)
     }
 
     func testNormalWeeklyStateLetsFiveHourTempoRecommendEasingUp() {
@@ -107,6 +110,7 @@ final class PaceModelTests: XCTestCase {
 
         XCTAssertEqual(recommendation.action, "Hold this pace")
         XCTAssertEqual(recommendation.status, .steady)
+        XCTAssertEqual(recommendation.direction, .hold)
     }
 
     func testRecentTrendCalculatesPercentPointsPerHour() {
