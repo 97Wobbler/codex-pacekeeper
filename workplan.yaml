@@ -1,0 +1,109 @@
+meta:
+  created: 2026-05-09
+  spec_source: "User request: implement pacemaker-style global guidance using 5h/week constraints and usage slope history"
+
+  as_is: |
+    The app fetches live WHAM usage, computes independent 5h and week pace readings, and renders two HUD rows. Each row currently produces its own guidance from current delta only. There is no global recommendation, no persistent sample history, and no slope/trend calculation.
+
+  to_be: |
+    The app should show one pacemaker recommendation for what to do now, with 5h/week rows as supporting evidence. The recommendation should respect weekly quota constraints before short-window encouragement, and should be able to use recent usage slope from persisted polling samples.
+
+  human_gate_values:
+    null: AI 단독 진행
+    approve: 선행 AI 산출물을 기준으로 인간 승인 대기
+    execute: 인간 직접 수행 (AI는 준비물만)
+
+  principles:
+    - "The product is a true pacemaker: too slow means speed up, too fast means ease up."
+    - "Weekly quota is a hard budget constraint over the 5h pacing signal."
+    - "Store only usage percentages and timestamps; never store tokens or raw API responses."
+    - "Keep HUD glanceable: one action recommendation, gauges as evidence."
+
+tasks:
+  - id: T01
+    name: Core global pace recommendation engine
+    blocked_by: []
+    human_gate: null
+    done: false
+    category: feat
+    output:
+      - Sources/CodexPacekeeperCore/PaceModel.swift
+      - Tests/CodexPacekeeperTests/PaceModelTests.swift
+    spec: |
+      Add a pure core model for one global pacemaker recommendation derived from primary 5h and weekly readings.
+      Requirements:
+      - Introduce a public `PaceRecommendation` value in `CodexPacekeeperCore`.
+      - It should expose at least an action/guidance string suitable for the HUD.
+      - The recommendation must treat weekly quota as a constraint over primary-window guidance:
+        - If weekly actual usage is >= 90% or weekly status is redline, recommend `Short efforts only`.
+        - If weekly delta is strongly ahead (threshold/redline), recommend slowing/tapering even when 5h is behind.
+        - If weekly is behind and 5h is not redline, allow or encourage picking up pace.
+        - Otherwise use the 5h reading for short-window rhythm.
+      - Preserve existing `PaceReading.guidance` behavior if useful for menu/detail contexts, but the new global recommendation should be the future HUD source of truth.
+      - Add focused unit tests covering:
+        1. Week redline overrides 5h behind.
+        2. Week threshold/ahead overrides 5h behind.
+        3. Both windows behind recommends picking up pace.
+        4. Normal weekly state lets 5h tempo recommend easing up.
+        5. Steady windows recommend holding pace.
+      - Do not add persistence or UI in this task.
+    verify_checks:
+      - "PaceRecommendation is public and usable by the app target."
+      - "Weekly redline/threshold constraint is tested."
+      - "swift build succeeds."
+
+  - id: T02
+    name: Persistent usage history and slope calculation
+    blocked_by: [T01]
+    human_gate: null
+    done: false
+    category: feat
+    output:
+      - Sources/CodexPacekeeperCore/UsageHistoryStore.swift
+      - Sources/CodexPacekeeper/AppDelegate.swift
+      - Tests/CodexPacekeeperTests/PaceModelTests.swift
+    spec: |
+      Add lightweight persisted usage sample history and recent slope calculation.
+      Requirements:
+      - Store only timestamp, primary used percent/resetAt, and weekly used percent/resetAt. Do not store tokens or raw API responses.
+      - Use an app support file such as `~/Library/Application Support/Codex Pacekeeper/usage-samples.json`.
+      - Keep a bounded rolling history. A reasonable default is max 7 days or max 2,000 samples.
+      - Record a sample after each successful fresh usage fetch.
+      - Provide a pure slope calculation over recent samples, preferably last 30-60 minutes when enough data exists:
+        - percent-points per hour for primary and weekly usage.
+        - handle reset boundaries by ignoring samples whose resetAt differs materially from the latest sample.
+        - return nil/empty trend when there is insufficient history.
+      - Add unit tests for slope calculation and reset-boundary filtering. Keep file I/O tests minimal or avoid them if pure helpers can be tested.
+      - Do not change HUD layout in this task.
+    verify_checks:
+      - "History samples contain no auth token or raw API response fields."
+      - "Successful fresh fetch records a sample."
+      - "Slope ignores samples across reset boundaries."
+      - "swift build succeeds."
+
+  - id: T03
+    name: Integrate global recommendation into HUD
+    blocked_by: [T01, T02]
+    human_gate: null
+    done: false
+    category: feat
+    output:
+      - Sources/CodexPacekeeper/AppDelegate.swift
+      - Sources/CodexPacekeeper/PaceViews.swift
+      - Sources/CodexPacekeeperCore/PaceModel.swift
+    spec: |
+      Replace per-row HUD guidance with one global pacemaker recommendation.
+      Requirements:
+      - Compute and publish one global recommendation from the current snapshot and available trend/history.
+      - HUD should render the recommendation as the primary action line.
+      - The 5h and week rows should remain as supporting evidence with labels, gauges, and `used · target` numbers.
+      - Avoid conflicting per-row commands such as 5h saying speed up while week says slow down.
+      - Loading/error/stale display behavior should remain: fresh state should not show redundant sync text; stale/error should show the state message.
+      - Keep the HUD compact and draggable behavior unchanged.
+      - If trend is unavailable, recommendation should still work from current snapshot.
+      - If trend is available, incorporate it conservatively: a sharply increasing recent burn rate can upgrade guidance toward easing up, while very flat usage when behind can support picking up pace.
+    verify_checks:
+      - "HUD has one primary recommendation, not one command per 5h/week row."
+      - "5h/week rows remain as evidence."
+      - "Weekly constraint prevents a 5h-behind speed-up recommendation when week is redline."
+      - "swift build succeeds."
