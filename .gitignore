@@ -1,9 +1,13 @@
 # Xcode
 DerivedData/
+build/
 *.xcuserstate
 *.xcworkspace/xcuserdata/
 *.xcodeproj/xcuserdata/
 *.xcodeproj/project.xcworkspace/xcuserdata/
+*.xccheckout
+*.moved-aside
+*.xcscmblueprint
 
 # Swift Package Manager
 .build/
@@ -12,6 +16,9 @@ Package.resolved
 
 # macOS
 .DS_Store
+.AppleDouble
+.LSOverride
+Icon?
 
 # App archives and signing output
 *.app
@@ -19,8 +26,24 @@ Package.resolved
 *.xcarchive
 *.ipa
 
+# Logs and diagnostics
+*.log
+*.trace
+*.xcresult/
+
 # Local environment
 .env
 .env.*
 !.env.example
+*.local
 
+# App runtime cache or exported local state
+usage-cache.json
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+
+# Temporary files
+tmp/
+temp/
+*.tmp
