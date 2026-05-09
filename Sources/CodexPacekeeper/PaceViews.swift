@@ -23,8 +23,8 @@ struct PaceSummaryView: View {
         VStack(alignment: .leading, spacing: 10) {
             if snapshot.hasUsageData {
                 RecommendationLine(recommendation: snapshot.paceRecommendation)
-                PaceRow(reading: snapshot.primary)
-                PaceRow(reading: snapshot.weekly)
+                PaceRow(reading: snapshot.primary, now: snapshot.lastRefreshedAt)
+                PaceRow(reading: snapshot.weekly, now: snapshot.lastRefreshedAt)
             } else {
                 StatusOnlyView(snapshot: snapshot)
             }
@@ -127,13 +127,14 @@ private struct RecommendationLine: View {
 
 private struct PaceRow: View {
     let reading: PaceReading
+    let now: Date
 
     var body: some View {
         Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: 5) {
             GridRow {
                 WindowLabel(text: reading.label)
 
-                Text("\(reading.actualPercent.roundedPercent) used · \(reading.recommendedPercent.roundedPercent) target")
+                Text("\(reading.actualPercent.roundedPercent) used · \(reading.recommendedPercent.roundedPercent) target · reset \(reading.resetTimeRemaining(from: now))")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
@@ -212,4 +213,27 @@ private extension Double {
         "\(Int(rounded()))%"
     }
 
+}
+
+private extension PaceReading {
+    func resetTimeRemaining(from now: Date) -> String {
+        let remaining = max(0, resetAt.timeIntervalSince(now))
+        let totalMinutes = Int((remaining / 60).rounded())
+
+        if totalMinutes < 60 {
+            return "\(totalMinutes)m"
+        }
+
+        let hours = totalMinutes / 60
+        let minutes = totalMinutes % 60
+
+        if hours < 24 {
+            return minutes == 0 ? "\(hours)h" : "\(hours)h\(minutes)m"
+        }
+
+        let days = hours / 24
+        let remainingHours = hours % 24
+
+        return remainingHours == 0 ? "\(days)d" : "\(days)d\(remainingHours)h"
+    }
 }
