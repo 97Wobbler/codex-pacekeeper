@@ -22,8 +22,9 @@ struct PaceSummaryView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             if snapshot.hasUsageData {
-                PaceRow(reading: snapshot.primary, isPrimary: true)
-                PaceRow(reading: snapshot.weekly, isPrimary: false)
+                RecommendationLine(recommendation: snapshot.paceRecommendation)
+                PaceRow(reading: snapshot.primary)
+                PaceRow(reading: snapshot.weekly)
             } else {
                 StatusOnlyView(snapshot: snapshot)
             }
@@ -90,22 +91,52 @@ private struct StatusOnlyView: View {
     }
 }
 
+private struct RecommendationLine: View {
+    let recommendation: PaceRecommendation
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: recommendation.status.systemImageName)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(statusColor)
+                .frame(width: 18)
+
+            Text(recommendation.action)
+                .font(.subheadline.weight(.semibold))
+                .lineLimit(1)
+
+            Spacer(minLength: 0)
+        }
+    }
+
+    private var statusColor: Color {
+        switch recommendation.status {
+        case .easy:
+            return .blue
+        case .steady:
+            return .green
+        case .tempo:
+            return .yellow
+        case .threshold:
+            return .orange
+        case .redline:
+            return .red
+        }
+    }
+}
+
 private struct PaceRow: View {
     let reading: PaceReading
-    let isPrimary: Bool
 
     var body: some View {
         Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: 5) {
             GridRow {
                 WindowLabel(text: reading.label)
 
-                HStack {
-                    Text(reading.guidance)
-                        .font(.subheadline.weight(isPrimary ? .semibold : .medium))
-                        .lineLimit(1)
-
-                    Spacer()
-                }
+                Text("\(reading.actualPercent.roundedPercent) used · \(reading.recommendedPercent.roundedPercent) target")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
             }
 
             GridRow {
@@ -113,16 +144,6 @@ private struct PaceRow: View {
                     .frame(width: WindowLabel.width, height: 1)
 
                 GaugeBar(reading: reading)
-            }
-
-            GridRow {
-                Color.clear
-                    .frame(width: WindowLabel.width, height: 1)
-
-                Text("\(reading.actualPercent.roundedPercent) used · \(reading.recommendedPercent.roundedPercent) target")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
             }
         }
     }

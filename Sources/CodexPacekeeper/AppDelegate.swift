@@ -107,8 +107,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             let token = try authTokenStore.accessToken()
             let freshSnapshot = try await usageClient.fetchSnapshot(accessToken: token)
             recordUsageSample(for: freshSnapshot)
-            lastSuccessfulSnapshot = freshSnapshot
-            snapshot = freshSnapshot.withPaused(isPaused)
+            let trendedSnapshot = freshSnapshot.withTrend(usageTrend(now: freshSnapshot.lastRefreshedAt))
+            lastSuccessfulSnapshot = trendedSnapshot
+            snapshot = trendedSnapshot.withPaused(isPaused)
             updateHUD()
             deliverNotificationsIfNeeded(for: snapshot)
         } catch {
@@ -121,6 +122,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             }
 
             updateHUD()
+        }
+    }
+
+    private func usageTrend(now: Date) -> UsageTrend? {
+        do {
+            return try usageHistoryStore.recentTrend(now: now)
+        } catch {
+            NSLog("Codex Pacekeeper failed to load usage trend: \(error.localizedDescription)")
+            return nil
         }
     }
 

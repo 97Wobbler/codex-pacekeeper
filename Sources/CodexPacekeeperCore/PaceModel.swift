@@ -26,6 +26,7 @@ public struct UsageWindow: Equatable {
             recommendedPercent: recommended,
             deltaPercentagePoints: delta,
             resetAt: resetAt,
+            limitWindowSeconds: limitWindowSeconds,
             status: PaceStatus.status(forActualPercent: actual, deltaPercentagePoints: delta),
             isPaused: false
         )
@@ -38,8 +39,29 @@ public struct PaceReading: Equatable {
     public let recommendedPercent: Double
     public let deltaPercentagePoints: Double
     public let resetAt: Date
+    public let limitWindowSeconds: TimeInterval
     public let status: PaceStatus
     public let isPaused: Bool
+
+    public init(
+        label: String,
+        actualPercent: Double,
+        recommendedPercent: Double,
+        deltaPercentagePoints: Double,
+        resetAt: Date,
+        limitWindowSeconds: TimeInterval = 5 * 60 * 60,
+        status: PaceStatus,
+        isPaused: Bool
+    ) {
+        self.label = label
+        self.actualPercent = actualPercent
+        self.recommendedPercent = recommendedPercent
+        self.deltaPercentagePoints = deltaPercentagePoints
+        self.resetAt = resetAt
+        self.limitWindowSeconds = limitWindowSeconds
+        self.status = status
+        self.isPaused = isPaused
+    }
 
     public var menuBarTitle: String {
         if isPaused {
@@ -75,6 +97,7 @@ public struct PaceReading: Equatable {
             recommendedPercent: recommendedPercent,
             deltaPercentagePoints: deltaPercentagePoints,
             resetAt: resetAt,
+            limitWindowSeconds: limitWindowSeconds,
             status: status,
             isPaused: paused
         )
@@ -86,7 +109,7 @@ public struct PaceRecommendation: Equatable {
     public let guidance: String
     public let status: PaceStatus
 
-    public init(primary: PaceReading, weekly: PaceReading) {
+    public init(primary: PaceReading, weekly: PaceReading, trend: UsageTrend? = nil) {
         if primary.isPaused || weekly.isPaused {
             self.init(action: "Paused", status: .steady)
             return
@@ -103,17 +126,52 @@ public struct PaceRecommendation: Equatable {
         }
 
         if weekly.status == .easy && primary.status != .redline {
-            self.init(action: "Pick up pace", status: .easy)
+            self.init(primary: primary, weekly: weekly, action: "Pick up pace", status: .easy, trend: trend)
             return
         }
 
-        self.init(action: primary.guidance, status: primary.status)
+        self.init(primary: primary, weekly: weekly, action: primary.guidance, status: primary.status, trend: trend)
     }
 
     private init(action: String, status: PaceStatus) {
         self.action = action
         self.guidance = action
         self.status = status
+    }
+
+    private init(primary: PaceReading, weekly: PaceReading, action: String, status: PaceStatus, trend: UsageTrend?) {
+        guard let trend else {
+            self.init(action: action, status: status)
+            return
+        }
+
+        let expectedPrimaryRate = 100 / (primary.limitWindowHours)
+        let expectedWeeklyRate = 100 / (weekly.limitWindowHours)
+        let primaryRate = max(0, trend.primaryPercentPointsPerHour)
+        let weeklyRate = max(0, trend.weeklyPercentPointsPerHour)
+        let sharplyIncreasingBurn = primaryRate >= expectedPrimaryRate * 2
+            || (weekly.deltaPercentagePoints >= -5 && weeklyRate >= expectedWeeklyRate * 8)
+
+        if sharplyIncreasingBurn {
+            switch status {
+            case .easy:
+                self.init(action: "Hold this pace", status: .steady)
+            case .steady:
+                self.init(action: "Ease up soon", status: .tempo)
+            case .tempo:
+                self.init(action: "Taper recommended", status: .threshold)
+            case .threshold, .redline:
+                self.init(action: action, status: status)
+            }
+            return
+        }
+
+        if primary.deltaPercentagePoints <= -5 && primaryRate <= expectedPrimaryRate * 0.1 {
+            self.init(action: "Pick up pace", status: .easy)
+            return
+        }
+
+        self.init(action: action, status: status)
     }
 }
 
@@ -173,6 +231,23 @@ public struct UsageSnapshot: Equatable {
     public let lastRefreshedAt: Date
     public let state: UsageSnapshotState
     public let message: String?
+    public let trend: UsageTrend?
+
+    public init(
+        primary: PaceReading,
+        weekly: PaceReading,
+        lastRefreshedAt: Date,
+        state: UsageSnapshotState,
+        message: String?,
+        trend: UsageTrend? = nil
+    ) {
+        self.primary = primary
+        self.weekly = weekly
+        self.lastRefreshedAt = lastRefreshedAt
+        self.state = state
+        self.message = message
+        self.trend = trend
+    }
 
     public var isStale: Bool {
         state == .stale
@@ -183,7 +258,7 @@ public struct UsageSnapshot: Equatable {
     }
 
     public var paceRecommendation: PaceRecommendation {
-        PaceRecommendation(primary: primary, weekly: weekly)
+        PaceRecommendation(primary: primary, weekly: weekly, trend: trend)
     }
 
     public var menuBarTitle: String {
@@ -241,7 +316,8 @@ public struct UsageSnapshot: Equatable {
             ).pace(at: now),
             lastRefreshedAt: now,
             state: .loading,
-            message: "Fetching usage"
+            message: "Fetching usage",
+            trend: nil
         )
     }
 
@@ -264,7 +340,8 @@ public struct UsageSnapshot: Equatable {
             ).pace(at: now),
             lastRefreshedAt: now,
             state: .error,
-            message: message
+            message: message,
+            trend: nil
         )
     }
 
@@ -274,7 +351,8 @@ public struct UsageSnapshot: Equatable {
             weekly: weekly.withPaused(paused),
             lastRefreshedAt: lastRefreshedAt,
             state: state,
-            message: message
+            message: message,
+            trend: trend
         )
     }
 
@@ -284,8 +362,26 @@ public struct UsageSnapshot: Equatable {
             weekly: weekly,
             lastRefreshedAt: lastRefreshedAt,
             state: .stale,
-            message: message
+            message: message,
+            trend: trend
         )
+    }
+
+    public func withTrend(_ trend: UsageTrend?) -> UsageSnapshot {
+        UsageSnapshot(
+            primary: primary,
+            weekly: weekly,
+            lastRefreshedAt: lastRefreshedAt,
+            state: state,
+            message: message,
+            trend: trend
+        )
+    }
+}
+
+private extension PaceReading {
+    var limitWindowHours: Double {
+        max(limitWindowSeconds / 3_600, 1 / 60)
     }
 }
 

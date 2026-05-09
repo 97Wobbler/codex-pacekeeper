@@ -85,7 +85,7 @@ tasks:
     name: Integrate global recommendation into HUD
     blocked_by: [T01, T02]
     human_gate: null
-    done: false
+    done: true
     category: feat
     output:
       - Sources/CodexPacekeeper/AppDelegate.swift
