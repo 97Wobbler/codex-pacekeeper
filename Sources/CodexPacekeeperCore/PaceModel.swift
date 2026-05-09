@@ -81,6 +81,13 @@ public struct PaceReading: Equatable {
     }
 }
 
+public enum UsageSnapshotState: String, Equatable {
+    case loading
+    case fresh
+    case stale
+    case error
+}
+
 public enum PaceStatus: String, Equatable {
     case easy
     case steady
@@ -128,7 +135,47 @@ public struct UsageSnapshot: Equatable {
     public let primary: PaceReading
     public let weekly: PaceReading
     public let lastRefreshedAt: Date
-    public let isStale: Bool
+    public let state: UsageSnapshotState
+    public let message: String?
+
+    public var isStale: Bool {
+        state == .stale
+    }
+
+    public var menuBarTitle: String {
+        switch state {
+        case .loading:
+            return "PK ..."
+        case .error:
+            return "PK ?"
+        case .fresh, .stale:
+            return primary.menuBarTitle
+        }
+    }
+
+    public var stateLabel: String {
+        switch state {
+        case .loading:
+            return "loading"
+        case .fresh:
+            return "fresh"
+        case .stale:
+            return "stale"
+        case .error:
+            return "error"
+        }
+    }
+
+    public var stateSystemImageName: String {
+        switch state {
+        case .loading:
+            return "hourglass"
+        case .error:
+            return "questionmark.circle"
+        case .fresh, .stale:
+            return primary.status.systemImageName
+        }
+    }
 
     public static var placeholder: UsageSnapshot {
         let now = Date()
@@ -149,7 +196,31 @@ public struct UsageSnapshot: Equatable {
                 limitWindowSeconds: week
             ).pace(at: now),
             lastRefreshedAt: now,
-            isStale: false
+            state: .loading,
+            message: "Fetching usage"
+        )
+    }
+
+    public static func unavailable(now: Date = Date(), message: String) -> UsageSnapshot {
+        let fiveHours: TimeInterval = 5 * 60 * 60
+        let week: TimeInterval = 7 * 24 * 60 * 60
+
+        return UsageSnapshot(
+            primary: UsageWindow(
+                label: "5h",
+                usedPercent: 0,
+                resetAt: now.addingTimeInterval(fiveHours),
+                limitWindowSeconds: fiveHours
+            ).pace(at: now),
+            weekly: UsageWindow(
+                label: "week",
+                usedPercent: 0,
+                resetAt: now.addingTimeInterval(week),
+                limitWindowSeconds: week
+            ).pace(at: now),
+            lastRefreshedAt: now,
+            state: .error,
+            message: message
         )
     }
 
@@ -158,7 +229,18 @@ public struct UsageSnapshot: Equatable {
             primary: primary.withPaused(paused),
             weekly: weekly.withPaused(paused),
             lastRefreshedAt: lastRefreshedAt,
-            isStale: isStale
+            state: state,
+            message: message
+        )
+    }
+
+    public func markingStale(message: String) -> UsageSnapshot {
+        UsageSnapshot(
+            primary: primary,
+            weekly: weekly,
+            lastRefreshedAt: lastRefreshedAt,
+            state: .stale,
+            message: message
         )
     }
 }

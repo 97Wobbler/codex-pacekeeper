@@ -26,13 +26,33 @@ struct PaceSummaryView: View {
 
             HStack(spacing: 6) {
                 Circle()
-                    .fill(snapshot.isStale ? Color.orange : Color.green)
+                    .fill(stateColor)
                     .frame(width: 6, height: 6)
-                Text(snapshot.isStale ? "stale" : "fresh")
+                Text(snapshot.stateLabel)
                 Text(snapshot.lastRefreshedAt, style: .time)
             }
             .font(.caption2)
             .foregroundStyle(.secondary)
+
+            if let message = snapshot.message {
+                Text(message)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+        }
+    }
+
+    private var stateColor: Color {
+        switch snapshot.state {
+        case .loading:
+            return .blue
+        case .fresh:
+            return .green
+        case .stale:
+            return .orange
+        case .error:
+            return .red
         }
     }
 }

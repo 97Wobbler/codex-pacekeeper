@@ -6,12 +6,16 @@ The product direction and MVP scope live in [docs/codex-pacekeeper-prd.md](docs/
 
 ## Current Status
 
-Initial SwiftUI scaffold:
+Functional SwiftUI scaffold:
 
 - Swift Package Manager project
 - macOS `MenuBarExtra` shell
 - floating HUD shell using `NSPanel`
+- `~/.codex/auth.json` access token reading
+- ChatGPT WHAM usage API polling
 - pace calculation model for actual usage, recommended pace, delta, and status
+- loading, stale, error, and paused states
+- Threshold/Redline notification logic for bundled app runs
 - unit tests for the pace model
 
 ## Requirements
@@ -36,12 +40,8 @@ swift run CodexPacekeeper
 
 ## MVP Direction
 
-The MVP will add:
+Remaining MVP work:
 
-- `~/.codex/auth.json` token reading
-- ChatGPT WHAM usage API polling
-- 5-hour and weekly usage windows
-- stale/error/paused states
-- two-tick floating HUD gauge
-- Threshold/Redline notifications
-
+- HUD drag/snap and position persistence
+- settings for polling interval and notification behavior
+- app bundle/signing workflow

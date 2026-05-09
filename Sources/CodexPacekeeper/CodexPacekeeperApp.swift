@@ -38,10 +38,10 @@ struct CodexPacekeeperApp: App {
     }
 
     private var menuBarTitle: String {
-        appDelegate.snapshot.primary.menuBarTitle
+        appDelegate.snapshot.menuBarTitle
     }
 
     private var menuBarIcon: String {
-        appDelegate.snapshot.primary.status.systemImageName
+        appDelegate.snapshot.stateSystemImageName
     }
 }
