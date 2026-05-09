@@ -152,7 +152,7 @@ private struct PaceRow: View {
                     Text(reading.actualPercent.roundedPercent)
                         .foregroundStyle(statusColor)
                         .fontWeight(.semibold)
-                    Text(" used · \(reading.recommendedPercent.roundedPercent) target · reset \(reading.resetTimeRemaining(from: now))")
+                    Text(" used · \(reading.recommendedPercent.roundedPercent) target | reset \(reading.resetTimeRemaining(from: now))")
                         .foregroundStyle(.secondary)
                 }
                 .font(.caption2)
