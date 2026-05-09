@@ -21,6 +21,7 @@ Package.resolved
 Icon?
 
 # App archives and signing output
+dist/
 *.app
 *.dSYM
 *.xcarchive

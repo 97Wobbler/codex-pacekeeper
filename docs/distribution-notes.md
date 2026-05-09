@@ -1,5 +1,30 @@
 # Distribution Notes
 
+## v0.1.0 Baseline
+
+`v0.1.0` is the first MVP release line for Codex Pacekeeper.
+
+Included in this baseline:
+
+- macOS menu bar app and floating HUD
+- Codex auth token lookup from `~/.codex/auth.json`
+- WHAM usage API polling
+- 5-hour and weekly pace calculations
+- HUD position persistence
+- stale/error/paused states
+- threshold/redline notifications when running as a bundled app
+- local release packaging into `CodexPacekeeper.app.zip`
+- curl-based installation from GitHub Releases
+
+Not included in this baseline:
+
+- App Store distribution
+- Developer ID signing
+- Apple notarization
+- `.dmg` packaging
+- automatic updates
+- Homebrew cask
+
 ## Recommended MVP Distribution
 
 Use GitHub Releases with a zipped macOS app bundle.
@@ -49,14 +74,26 @@ Reasons:
 
 ## Packaging Plan
 
-Near-term:
+Implemented near-term workflow:
 
-1. Add `scripts/package-release.sh`.
+1. Run `scripts/package-release.sh`.
 2. Build the release binary with `swift build -c release`.
-3. Create a minimal `.app` bundle around the executable.
+3. Create a minimal unsigned `.app` bundle around the executable.
 4. Zip `CodexPacekeeper.app` into `dist/CodexPacekeeper.app.zip`.
-5. Upload the zip to a GitHub Release.
-6. Add `install.sh` for curl-based installation.
+5. Upload the zip to a GitHub Release tagged `v0.1.0`.
+6. Install with `install.sh`.
+
+Release metadata defaults:
+
+- Version: `0.1.0`
+- Build number: `1`
+- Bundle ID: `dev.whchoi.codex-pacekeeper`
+
+These can be overridden for packaging:
+
+```sh
+VERSION=0.1.0 BUILD_NUMBER=1 BUNDLE_ID=dev.whchoi.codex-pacekeeper scripts/package-release.sh
+```
 
 Later:
 

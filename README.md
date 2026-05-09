@@ -6,7 +6,9 @@ The product direction and MVP scope live in [docs/codex-pacekeeper-prd.md](docs/
 
 ## Current Status
 
-Functional SwiftUI scaffold:
+Current MVP baseline: `v0.1.0`.
+
+Functional SwiftUI app:
 
 - Swift Package Manager project
 - macOS `MenuBarExtra` shell
@@ -17,6 +19,8 @@ Functional SwiftUI scaffold:
 - loading, stale, error, and paused states
 - Threshold/Redline notification logic for bundled app runs
 - unit tests for the pace model
+- release packaging script for a zipped macOS `.app` bundle
+- curl-based installer for GitHub Release assets
 
 ## Requirements
 
@@ -48,6 +52,26 @@ swift run CodexPacekeeper -- --demo-huds
 
 Remaining MVP work:
 
-- HUD drag/snap and position persistence
 - settings for polling interval and notification behavior
-- app bundle/signing workflow
+- Developer ID signing and notarization workflow
+
+## Distribution
+
+The v0.1.0 MVP should be distributed through GitHub Releases as
+`CodexPacekeeper.app.zip`.
+
+Create the release archive locally:
+
+```sh
+scripts/package-release.sh
+```
+
+Install from the latest GitHub Release:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/97Wobbler/codex-pacekeeper/main/install.sh | bash
+```
+
+Distribution details and release checks live in
+[docs/distribution-notes.md](docs/distribution-notes.md) and
+[docs/release-checklist.md](docs/release-checklist.md).
