@@ -23,10 +23,7 @@ struct CodexPacekeeperApp: App {
                     appDelegate.setPaused(newValue)
                 }
 
-            Toggle("Show HUD", isOn: $showsHUD)
-                .onChange(of: showsHUD) { newValue in
-                    appDelegate.setHUDVisible(newValue)
-                }
+            Toggle("Show HUD", isOn: hudVisibilityBinding)
 
             Divider()
 
@@ -43,5 +40,15 @@ struct CodexPacekeeperApp: App {
 
     private var menuBarIcon: String {
         appDelegate.snapshot.stateSystemImageName
+    }
+
+    private var hudVisibilityBinding: Binding<Bool> {
+        Binding(
+            get: { showsHUD },
+            set: { newValue in
+                showsHUD = newValue
+                appDelegate.setHUDVisible(newValue)
+            }
+        )
     }
 }
