@@ -107,11 +107,6 @@ private struct PaceRow: View {
                     .font(.subheadline.weight(isPrimary ? .semibold : .medium))
 
                 Spacer()
-
-                Text(reading.paceLabel)
-                    .font(.caption2.weight(.medium))
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
             }
 
             GaugeBar(reading: reading)

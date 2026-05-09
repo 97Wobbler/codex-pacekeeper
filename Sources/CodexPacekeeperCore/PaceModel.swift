@@ -68,20 +68,6 @@ public struct PaceReading: Equatable {
         }
     }
 
-    public var paceLabel: String {
-        let points = Int(abs(deltaPercentagePoints).rounded())
-
-        if deltaPercentagePoints <= -10 {
-            return "\(points)pp behind target"
-        }
-
-        if deltaPercentagePoints > 10 {
-            return "\(points)pp ahead of target"
-        }
-
-        return "On target"
-    }
-
     public func withPaused(_ paused: Bool) -> PaceReading {
         PaceReading(
             label: label,
