@@ -19,6 +19,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     private static let hudOriginYDefaultsKey = "hudOriginY"
     private let authTokenStore = CodexAuthTokenStore()
     private let usageClient = WhamUsageClient()
+    private let usageHistoryStore = UsageHistoryStore()
 
     private var hudPanel: NSPanel?
     private var hudHostingView: NSHostingView<HUDView>?
@@ -105,6 +106,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         do {
             let token = try authTokenStore.accessToken()
             let freshSnapshot = try await usageClient.fetchSnapshot(accessToken: token)
+            recordUsageSample(for: freshSnapshot)
             lastSuccessfulSnapshot = freshSnapshot
             snapshot = freshSnapshot.withPaused(isPaused)
             updateHUD()
@@ -119,6 +121,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             }
 
             updateHUD()
+        }
+    }
+
+    private func recordUsageSample(for snapshot: UsageSnapshot) {
+        do {
+            try usageHistoryStore.record(UsageSample(snapshot: snapshot))
+        } catch {
+            NSLog("Codex Pacekeeper failed to record usage sample: \(error.localizedDescription)")
         }
     }
 

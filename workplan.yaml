@@ -56,7 +56,7 @@ tasks:
     name: Persistent usage history and slope calculation
     blocked_by: [T01]
     human_gate: null
-    done: false
+    done: true
     category: feat
     output:
       - Sources/CodexPacekeeperCore/UsageHistoryStore.swift

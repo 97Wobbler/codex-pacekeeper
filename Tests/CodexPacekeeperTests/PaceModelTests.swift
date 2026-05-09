@@ -96,6 +96,86 @@ final class PaceModelTests: XCTestCase {
         XCTAssertEqual(recommendation.status, .steady)
     }
 
+    func testRecentTrendCalculatesPercentPointsPerHour() {
+        let now = Date(timeIntervalSince1970: 10_000)
+        let primaryResetAt = now.addingTimeInterval(5 * 60 * 60)
+        let weeklyResetAt = now.addingTimeInterval(7 * 24 * 60 * 60)
+        let samples = [
+            usageSample(
+                timestamp: now.addingTimeInterval(-30 * 60),
+                primaryUsedPercent: 10,
+                primaryResetAt: primaryResetAt,
+                weeklyUsedPercent: 40,
+                weeklyResetAt: weeklyResetAt
+            ),
+            usageSample(
+                timestamp: now,
+                primaryUsedPercent: 16,
+                primaryResetAt: primaryResetAt,
+                weeklyUsedPercent: 41,
+                weeklyResetAt: weeklyResetAt
+            )
+        ]
+
+        let trend = UsageHistoryStore.recentTrend(samples: samples, now: now)
+
+        XCTAssertEqual(trend?.primaryPercentPointsPerHour, 12, accuracy: 0.0001)
+        XCTAssertEqual(trend?.weeklyPercentPointsPerHour, 2, accuracy: 0.0001)
+        XCTAssertEqual(trend?.sampleCount, 2)
+        XCTAssertEqual(trend?.interval, 30 * 60, accuracy: 0.0001)
+    }
+
+    func testRecentTrendIgnoresSamplesAcrossResetBoundary() {
+        let now = Date(timeIntervalSince1970: 10_000)
+        let latestPrimaryResetAt = now.addingTimeInterval(5 * 60 * 60)
+        let latestWeeklyResetAt = now.addingTimeInterval(7 * 24 * 60 * 60)
+        let oldPrimaryResetAt = now.addingTimeInterval(4 * 60 * 60)
+        let samples = [
+            usageSample(
+                timestamp: now.addingTimeInterval(-45 * 60),
+                primaryUsedPercent: 90,
+                primaryResetAt: oldPrimaryResetAt,
+                weeklyUsedPercent: 70,
+                weeklyResetAt: latestWeeklyResetAt
+            ),
+            usageSample(
+                timestamp: now.addingTimeInterval(-30 * 60),
+                primaryUsedPercent: 10,
+                primaryResetAt: latestPrimaryResetAt,
+                weeklyUsedPercent: 40,
+                weeklyResetAt: latestWeeklyResetAt
+            ),
+            usageSample(
+                timestamp: now,
+                primaryUsedPercent: 16,
+                primaryResetAt: latestPrimaryResetAt,
+                weeklyUsedPercent: 41,
+                weeklyResetAt: latestWeeklyResetAt
+            )
+        ]
+
+        let trend = UsageHistoryStore.recentTrend(samples: samples, now: now)
+
+        XCTAssertEqual(trend?.primaryPercentPointsPerHour, 12, accuracy: 0.0001)
+        XCTAssertEqual(trend?.weeklyPercentPointsPerHour, 2, accuracy: 0.0001)
+        XCTAssertEqual(trend?.sampleCount, 2)
+    }
+
+    func testRecentTrendReturnsNilWhenHistoryIsInsufficient() {
+        let now = Date(timeIntervalSince1970: 10_000)
+        let samples = [
+            usageSample(
+                timestamp: now,
+                primaryUsedPercent: 10,
+                primaryResetAt: now.addingTimeInterval(5 * 60 * 60),
+                weeklyUsedPercent: 40,
+                weeklyResetAt: now.addingTimeInterval(7 * 24 * 60 * 60)
+            )
+        ]
+
+        XCTAssertNil(UsageHistoryStore.recentTrend(samples: samples, now: now))
+    }
+
     private func reading(actual: Double, recommended: Double, label: String = "test") -> PaceReading {
         let delta = actual - recommended
 
@@ -107,6 +187,22 @@ final class PaceModelTests: XCTestCase {
             resetAt: resetAt,
             status: PaceStatus.status(forActualPercent: actual, deltaPercentagePoints: delta),
             isPaused: false
+        )
+    }
+
+    private func usageSample(
+        timestamp: Date,
+        primaryUsedPercent: Double,
+        primaryResetAt: Date,
+        weeklyUsedPercent: Double,
+        weeklyResetAt: Date
+    ) -> UsageSample {
+        UsageSample(
+            timestamp: timestamp,
+            primaryUsedPercent: primaryUsedPercent,
+            primaryResetAt: primaryResetAt,
+            weeklyUsedPercent: weeklyUsedPercent,
+            weeklyResetAt: weeklyResetAt
         )
     }
 }
