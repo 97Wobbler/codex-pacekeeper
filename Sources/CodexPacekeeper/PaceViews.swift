@@ -14,7 +14,7 @@ struct NotchHUDLayout: Equatable {
     }
 
     var compactSize: CGSize {
-        CGSize(width: max(notchWidth + 144, 320), height: max(topInset + 24, 54))
+        CGSize(width: max(notchWidth + 144, 320), height: 32)
     }
 
     var expandedSize: CGSize {
@@ -22,7 +22,7 @@ struct NotchHUDLayout: Equatable {
     }
 
     var topBandHeight: CGFloat {
-        max(topInset, 32)
+        32
     }
 }
 

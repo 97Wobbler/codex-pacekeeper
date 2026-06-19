@@ -26,6 +26,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     private var timer: Timer?
     private var isPaused = false
     private var isHUDExpanded = false
+    private var wantsHUDExpanded = false
+    private var hudTransitionGeneration = 0
     private var lastSuccessfulSnapshot: UsageSnapshot?
     private var deliveredNotificationKeys = Set<String>()
     private lazy var notificationCenter: UNUserNotificationCenter? = {
@@ -159,6 +161,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     private func createHUD() {
         let view = makeHUDView()
         let hostingView = HUDHostingView(rootView: view)
+        hostingView.applyTransparentBackground()
         hostingView.onHoverChanged = { [weak self] isHovered in
             Task { @MainActor [weak self] in
                 self?.setHUDExpanded(isHovered)
@@ -207,7 +210,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         panel.backgroundColor = .clear
         panel.isOpaque = false
-        panel.hasShadow = true
+        panel.hasShadow = false
         panel.isReleasedWhenClosed = false
         panel.contentView = hostingView
 
@@ -237,12 +240,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         return isHUDExpanded ? layout.expandedSize : layout.compactSize
     }
 
-    private func resizeHUDPanel(animated: Bool) {
+    private func resizeHUDPanel(to targetSize: NSSize, animated: Bool) {
         guard let panel = hudPanel else {
             return
         }
 
-        let targetSize = currentHUDSize
         guard panel.frame.size != targetSize else {
             return
         }
@@ -292,13 +294,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     }
 
     private func setHUDExpanded(_ isExpanded: Bool) {
-        guard isHUDExpanded != isExpanded else {
+        guard wantsHUDExpanded != isExpanded else {
             return
         }
 
-        isHUDExpanded = isExpanded
-        updateHUD()
-        resizeHUDPanel(animated: true)
+        wantsHUDExpanded = isExpanded
+        hudTransitionGeneration += 1
+        let transitionGeneration = hudTransitionGeneration
+        let layout = currentHUDLayout()
+
+        if isExpanded {
+            self.isHUDExpanded = true
+            updateHUD()
+            resizeHUDPanel(to: layout.expandedSize, animated: true)
+            return
+        }
+
+        resizeHUDPanel(to: layout.compactSize, animated: true)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) { [weak self] in
+            Task { @MainActor [weak self] in
+                guard
+                    let self,
+                    self.hudTransitionGeneration == transitionGeneration,
+                    !self.wantsHUDExpanded
+                else {
+                    return
+                }
+
+                self.isHUDExpanded = false
+                self.updateHUD()
+            }
+        }
     }
 
     private func requestNotificationAuthorization() {
@@ -354,6 +380,11 @@ private final class NotchHUDPanel: NSPanel {}
 private final class HUDHostingView: NSHostingView<HUDView> {
     var onHoverChanged: ((Bool) -> Void)?
     private var hoverTrackingArea: NSTrackingArea?
+
+    func applyTransparentBackground() {
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.clear.cgColor
+    }
 
     override func updateTrackingAreas() {
         if let hoverTrackingArea {
