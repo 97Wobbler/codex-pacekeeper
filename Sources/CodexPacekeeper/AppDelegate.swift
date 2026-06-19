@@ -28,6 +28,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     private var isHUDExpanded = false
     private var wantsHUDExpanded = false
     private var hudTransitionGeneration = 0
+    private var hudFrameAnimationTimer: Timer?
     private var lastSuccessfulSnapshot: UsageSnapshot?
     private var deliveredNotificationKeys = Set<String>()
     private lazy var notificationCenter: UNUserNotificationCenter? = {
@@ -54,6 +55,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
     func applicationWillTerminate(_ notification: Notification) {
         timer?.invalidate()
+        hudFrameAnimationTimer?.invalidate()
         NotificationCenter.default.removeObserver(self)
     }
 
@@ -252,10 +254,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         let frame = notchHUDFrame(size: targetSize)
 
         if animated {
-            panel.animator().setFrame(frame, display: true)
+            animateHUDPanel(to: targetSize)
         } else {
+            hudFrameAnimationTimer?.invalidate()
+            hudFrameAnimationTimer = nil
             panel.setFrame(frame, display: true)
         }
+    }
+
+    private func animateHUDPanel(to targetSize: NSSize) {
+        guard let panel = hudPanel else {
+            return
+        }
+
+        hudFrameAnimationTimer?.invalidate()
+
+        let startSize = panel.frame.size
+        let startDate = Date()
+        let duration: TimeInterval = 0.16
+
+        let animationTimer = Timer(timeInterval: 1 / 60, repeats: true) { [weak self, weak panel] timer in
+            Task { @MainActor [weak self, weak panel] in
+                guard let self, let panel else {
+                    timer.invalidate()
+                    return
+                }
+
+                let elapsed = Date().timeIntervalSince(startDate)
+                let progress = min(max(elapsed / duration, 0), 1)
+                let easedProgress = 1 - pow(1 - progress, 3)
+                let size = NSSize(
+                    width: startSize.width + (targetSize.width - startSize.width) * easedProgress,
+                    height: startSize.height + (targetSize.height - startSize.height) * easedProgress
+                )
+
+                panel.setFrame(self.notchHUDFrame(size: size), display: true)
+
+                if progress >= 1 {
+                    panel.setFrame(self.notchHUDFrame(size: targetSize), display: true)
+                    timer.invalidate()
+                    if self.hudFrameAnimationTimer === timer {
+                        self.hudFrameAnimationTimer = nil
+                    }
+                }
+            }
+        }
+        RunLoop.main.add(animationTimer, forMode: .common)
+        hudFrameAnimationTimer = animationTimer
     }
 
     private func makeHUDView() -> HUDView {
