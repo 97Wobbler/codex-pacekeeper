@@ -27,7 +27,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     private var isPaused = false
     private var isHUDExpanded = false
     private var wantsHUDExpanded = false
-    private var hudTransitionGeneration = 0
     private var hudFrameAnimationTimer: Timer?
     private var lastSuccessfulSnapshot: UsageSnapshot?
     private var deliveredNotificationKeys = Set<String>()
@@ -214,7 +213,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         panel.isOpaque = false
         panel.hasShadow = false
         panel.isReleasedWhenClosed = false
+        panel.minSize = NSSize(width: 1, height: 1)
+        panel.contentMinSize = NSSize(width: 1, height: 1)
+        hostingView.frame = NSRect(origin: .zero, size: frame.size)
         panel.contentView = hostingView
+        panel.setFrame(frame, display: false)
 
         return panel
     }
@@ -262,6 +265,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             hudFrameAnimationTimer?.invalidate()
             hudFrameAnimationTimer = nil
             panel.setFrame(frame, display: true)
+            panel.contentView?.frame = NSRect(origin: .zero, size: frame.size)
         }
     }
 
@@ -292,9 +296,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
                 )
 
                 panel.setFrame(self.notchHUDFrame(size: size), display: true)
+                panel.contentView?.frame = NSRect(origin: .zero, size: size)
 
                 if progress >= 1 {
-                    panel.setFrame(self.notchHUDFrame(size: targetSize), display: true)
+                    let finalFrame = self.notchHUDFrame(size: targetSize)
+                    panel.setFrame(finalFrame, display: true)
+                    panel.contentView?.frame = NSRect(origin: .zero, size: finalFrame.size)
                     timer.invalidate()
                     if self.hudFrameAnimationTimer === timer {
                         self.hudFrameAnimationTimer = nil
@@ -371,32 +378,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         }
 
         wantsHUDExpanded = isExpanded
-        hudTransitionGeneration += 1
-        let transitionGeneration = hudTransitionGeneration
         let layout = currentHUDLayout()
 
-        if isExpanded {
-            self.isHUDExpanded = true
-            updateHUD()
-            resizeHUDPanel(to: layout.expandedSize, animated: true)
-            return
-        }
-
-        resizeHUDPanel(to: layout.compactSize, animated: true)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) { [weak self] in
-            Task { @MainActor [weak self] in
-                guard
-                    let self,
-                    self.hudTransitionGeneration == transitionGeneration,
-                    !self.wantsHUDExpanded
-                else {
-                    return
-                }
-
-                self.isHUDExpanded = false
-                self.updateHUD()
-            }
-        }
+        self.isHUDExpanded = isExpanded
+        updateHUD()
+        resizeHUDPanel(to: isExpanded ? layout.expandedSize : layout.compactSize, animated: true)
     }
 
     private func requestNotificationAuthorization() {
@@ -453,7 +439,13 @@ private final class HUDHostingView: NSHostingView<HUDView> {
     var onHoverChanged: ((Bool) -> Void)?
     private var hoverTrackingArea: NSTrackingArea?
 
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: NSView.noIntrinsicMetric, height: NSView.noIntrinsicMetric)
+    }
+
     func applyTransparentBackground() {
+        translatesAutoresizingMaskIntoConstraints = true
+        autoresizingMask = [.width, .height]
         wantsLayer = true
         layer?.backgroundColor = NSColor.clear.cgColor
     }
