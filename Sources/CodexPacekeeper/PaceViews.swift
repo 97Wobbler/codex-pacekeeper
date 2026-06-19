@@ -3,16 +3,23 @@ import SwiftUI
 
 struct HUDView: View {
     let snapshot: UsageSnapshot
+    let isCollapsed: Bool
 
     var body: some View {
-        PaceSummaryView(snapshot: snapshot)
-            .padding(12)
+        Group {
+            if isCollapsed {
+                CollapsedPaceSummaryView(snapshot: snapshot)
+            } else {
+                PaceSummaryView(snapshot: snapshot)
+            }
+        }
+            .padding(isCollapsed ? 8 : 12)
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .stroke(Color.primary.opacity(0.12), lineWidth: 1)
             )
-            .frame(width: 280)
+            .frame(width: isCollapsed ? 220 : 280)
     }
 }
 
@@ -56,6 +63,56 @@ struct PaceSummaryView: View {
             return .blue
         case .fresh:
             return .green
+        case .stale:
+            return .orange
+        case .error:
+            return .red
+        }
+    }
+}
+
+private struct CollapsedPaceSummaryView: View {
+    let snapshot: UsageSnapshot
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: snapshot.stateSystemImageName)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(iconColor)
+                .frame(width: 16)
+
+            if snapshot.hasUsageData {
+                Text(snapshot.primary.label.uppercased())
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .monospaced()
+
+                Text(snapshot.primary.actualPercent.roundedPercent)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(snapshot.primary.status.hudColor)
+                    .monospacedDigit()
+
+                Text(snapshot.paceRecommendation.action)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                Text(snapshot.stateLabel.capitalized)
+                    .font(.caption.weight(.semibold))
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: 20, alignment: .leading)
+    }
+
+    private var iconColor: Color {
+        switch snapshot.state {
+        case .loading:
+            return .blue
+        case .fresh:
+            return snapshot.primary.status.hudColor
         case .stale:
             return .orange
         case .error:
