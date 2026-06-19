@@ -13,25 +13,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
         return UserDefaults.standard.bool(forKey: hudVisibilityDefaultsKey)
     }()
-    @Published private(set) var isHUDCollapsed: Bool = UserDefaults.standard.bool(forKey: hudCollapsedDefaultsKey)
-    @Published private(set) var hudOpacity: Double = {
-        if UserDefaults.standard.object(forKey: hudOpacityDefaultsKey) == nil {
-            return defaultHUDOpacity
-        }
-
-        return normalizedHUDOpacity(UserDefaults.standard.double(forKey: hudOpacityDefaultsKey))
-    }()
 
     private static let hudVisibilityDefaultsKey = "showsHUD"
-    private static let hudCollapsedDefaultsKey = "hudCollapsed"
-    private static let hudOpacityDefaultsKey = "hudOpacity"
-    private static let hudOriginXDefaultsKey = "hudOriginX"
-    private static let hudOriginYDefaultsKey = "hudOriginY"
-    private static let defaultHUDOpacity = 1.0
-    private static let minHUDOpacity = 0.35
-    private static let maxHUDOpacity = 1.0
     private static let expandedHUDSize = NSSize(width: 280, height: 120)
-    private static let collapsedHUDSize = NSSize(width: 220, height: 44)
+    private static let compactHUDSize = NSSize(width: 168, height: 32)
+    private static let notchTopPadding: CGFloat = 4
     private let authTokenStore = CodexAuthTokenStore()
     private let usageClient = WhamUsageClient()
     private let usageHistoryStore = UsageHistoryStore()
@@ -42,6 +28,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     private weak var menuBarState: MenuBarState?
     private var timer: Timer?
     private var isPaused = false
+    private var isHUDExpanded = false
     private var lastSuccessfulSnapshot: UsageSnapshot?
     private var deliveredNotificationKeys = Set<String>()
     private lazy var notificationCenter: UNUserNotificationCenter? = {
@@ -102,20 +89,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         applyHUDVisibility()
     }
 
-    func setHUDCollapsed(_ isCollapsed: Bool) {
-        isHUDCollapsed = isCollapsed
-        UserDefaults.standard.set(isCollapsed, forKey: Self.hudCollapsedDefaultsKey)
-        updateHUD()
-        resizeHUDPanel(animated: true)
-    }
-
-    func setHUDOpacity(_ opacity: Double) {
-        let normalizedOpacity = Self.normalizedHUDOpacity(opacity)
-        hudOpacity = normalizedOpacity
-        UserDefaults.standard.set(normalizedOpacity, forKey: Self.hudOpacityDefaultsKey)
-        applyHUDOpacity()
-    }
-
     func setMenuBarState(_ menuBarState: MenuBarState) {
         self.menuBarState = menuBarState
         if menuBarState.snapshot != snapshot {
@@ -125,15 +98,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
     private func applyHUDVisibility() {
         if isHUDVisible {
-            applyHUDOpacity()
             hudPanel?.orderFrontRegardless()
         } else {
             hudPanel?.orderOut(nil)
         }
-    }
-
-    private func applyHUDOpacity() {
-        hudPanel?.alphaValue = CGFloat(hudOpacity)
     }
 
     private func startPolling() {
@@ -192,15 +160,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     }
 
     private func createHUD() {
-        let view = HUDView(snapshot: snapshot, isCollapsed: isHUDCollapsed)
-        let hostingView = DraggableHUDHostingView(rootView: view)
-        let panel = makeHUDPanel(frame: initialHUDFrame(size: currentHUDSize), hostingView: hostingView)
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(hudPanelDidMove),
-            name: NSWindow.didMoveNotification,
-            object: panel
-        )
+        let view = makeHUDView()
+        let hostingView = HUDHostingView(rootView: view)
+        hostingView.onHoverChanged = { [weak self] isHovered in
+            Task { @MainActor [weak self] in
+                self?.setHUDExpanded(isHovered)
+            }
+        }
+        let panel = makeHUDPanel(frame: notchHUDFrame(size: currentHUDSize), hostingView: hostingView)
 
         hudHostingView = hostingView
         hudPanel = panel
@@ -217,7 +184,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         demoPanels = snapshots.map { snapshot in
             let panel = makeHUDPanel(
                 frame: NSRect(x: startX, y: y, width: panelSize.width, height: panelSize.height),
-                hostingView: DraggableHUDHostingView(rootView: HUDView(snapshot: snapshot, isCollapsed: false))
+                hostingView: HUDHostingView(rootView: HUDView(
+                    snapshot: snapshot,
+                    isExpanded: true
+                ))
             )
             panel.orderFrontRegardless()
             y -= panelSize.height + 14
@@ -225,8 +195,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         }
     }
 
-    private func makeHUDPanel(frame: NSRect, hostingView: DraggableHUDHostingView) -> NSPanel {
-        let panel = DraggableHUDPanel(
+    private func makeHUDPanel(frame: NSRect, hostingView: HUDHostingView) -> NSPanel {
+        let panel = NotchHUDPanel(
             contentRect: frame,
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
@@ -234,64 +204,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         )
 
         panel.isFloatingPanel = true
-        panel.level = .floating
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        panel.level = .statusBar
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         panel.backgroundColor = .clear
         panel.isOpaque = false
         panel.hasShadow = true
         panel.isReleasedWhenClosed = false
-        panel.isMovableByWindowBackground = true
         panel.contentView = hostingView
-        panel.alphaValue = CGFloat(hudOpacity)
 
         return panel
     }
 
-    private func initialHUDFrame(size: NSSize) -> NSRect {
-        if
-            UserDefaults.standard.object(forKey: Self.hudOriginXDefaultsKey) != nil,
-            UserDefaults.standard.object(forKey: Self.hudOriginYDefaultsKey) != nil
-        {
-            let savedOrigin = NSPoint(
-                x: UserDefaults.standard.double(forKey: Self.hudOriginXDefaultsKey),
-                y: UserDefaults.standard.double(forKey: Self.hudOriginYDefaultsKey)
-            )
-
-            return constrainedHUDFrame(NSRect(
-                x: savedOrigin.x,
-                y: savedOrigin.y,
-                width: size.width,
-                height: size.height
-            ), visibleFrame: bestVisibleFrame(for: savedOrigin))
+    private func notchHUDFrame(size: NSSize) -> NSRect {
+        guard let screen = NSScreen.main ?? NSScreen.screens.first else {
+            return NSRect(x: 80, y: 640, width: size.width, height: size.height)
         }
 
-        if let visibleFrame = NSScreen.main?.visibleFrame {
-            return NSRect(
-                x: visibleFrame.minX + 80,
-                y: visibleFrame.maxY - size.height - 80,
-                width: size.width,
-                height: size.height
-            )
-        }
-
-        return NSRect(x: 80, y: 640, width: size.width, height: size.height)
-    }
-
-    @objc private func hudPanelDidMove(_ notification: Notification) {
-        guard let panel = notification.object as? NSPanel else {
-            return
-        }
-
-        persistHUDOrigin(panel.frame.origin)
+        return NSRect(
+            x: screen.frame.midX - size.width / 2,
+            y: screen.frame.maxY - size.height - Self.notchTopPadding,
+            width: size.width,
+            height: size.height
+        )
     }
 
     private func updateHUD() {
-        hudHostingView?.rootView = HUDView(snapshot: snapshot, isCollapsed: isHUDCollapsed)
+        hudHostingView?.rootView = makeHUDView()
         menuBarState?.snapshot = snapshot
     }
 
     private var currentHUDSize: NSSize {
-        isHUDCollapsed ? Self.collapsedHUDSize : Self.expandedHUDSize
+        isHUDExpanded ? Self.expandedHUDSize : Self.compactHUDSize
     }
 
     private func resizeHUDPanel(animated: Bool) {
@@ -304,54 +247,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             return
         }
 
-        var frame = panel.frame
-        let maxY = frame.maxY
-        frame.size = targetSize
-        frame.origin.y = maxY - targetSize.height
-        frame = constrainedHUDFrame(frame, visibleFrame: panel.screen?.visibleFrame)
+        let frame = notchHUDFrame(size: targetSize)
 
         if animated {
             panel.animator().setFrame(frame, display: true)
         } else {
             panel.setFrame(frame, display: true)
         }
-
-        persistHUDOrigin(frame.origin)
     }
 
-    private func constrainedHUDFrame(_ frame: NSRect, visibleFrame: NSRect? = nil) -> NSRect {
-        guard let visibleFrame = visibleFrame ?? bestVisibleFrame(for: frame.origin) else {
-            return frame
-        }
-
-        var constrainedFrame = frame
-        if constrainedFrame.maxX > visibleFrame.maxX {
-            constrainedFrame.origin.x = visibleFrame.maxX - constrainedFrame.width
-        }
-        if constrainedFrame.minX < visibleFrame.minX {
-            constrainedFrame.origin.x = visibleFrame.minX
-        }
-        if constrainedFrame.maxY > visibleFrame.maxY {
-            constrainedFrame.origin.y = visibleFrame.maxY - constrainedFrame.height
-        }
-        if constrainedFrame.minY < visibleFrame.minY {
-            constrainedFrame.origin.y = visibleFrame.minY
-        }
-
-        return constrainedFrame
+    private func makeHUDView() -> HUDView {
+        HUDView(snapshot: snapshot, isExpanded: isHUDExpanded)
     }
 
-    private func bestVisibleFrame(for point: NSPoint) -> NSRect? {
-        if let screen = NSScreen.screens.first(where: { $0.visibleFrame.contains(point) }) {
-            return screen.visibleFrame
+    private func setHUDExpanded(_ isExpanded: Bool) {
+        guard isHUDExpanded != isExpanded else {
+            return
         }
 
-        return NSScreen.main?.visibleFrame
-    }
-
-    private func persistHUDOrigin(_ origin: CGPoint) {
-        UserDefaults.standard.set(origin.x, forKey: Self.hudOriginXDefaultsKey)
-        UserDefaults.standard.set(origin.y, forKey: Self.hudOriginYDefaultsKey)
+        isHUDExpanded = isExpanded
+        updateHUD()
+        resizeHUDPanel(animated: true)
     }
 
     private func requestNotificationAuthorization() {
@@ -400,17 +316,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
         return error.localizedDescription
     }
-
-    private static func normalizedHUDOpacity(_ opacity: Double) -> Double {
-        min(max(opacity, minHUDOpacity), maxHUDOpacity)
-    }
 }
 
-private final class DraggableHUDPanel: NSPanel {}
+private final class NotchHUDPanel: NSPanel {}
 
-private final class DraggableHUDHostingView: NSHostingView<HUDView> {
-    override func mouseDown(with event: NSEvent) {
-        window?.performDrag(with: event)
+private final class HUDHostingView: NSHostingView<HUDView> {
+    var onHoverChanged: ((Bool) -> Void)?
+    private var hoverTrackingArea: NSTrackingArea?
+
+    override func updateTrackingAreas() {
+        if let hoverTrackingArea {
+            removeTrackingArea(hoverTrackingArea)
+        }
+
+        let trackingArea = NSTrackingArea(
+            rect: .zero,
+            options: [.activeAlways, .inVisibleRect, .mouseEnteredAndExited],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(trackingArea)
+        hoverTrackingArea = trackingArea
+
+        super.updateTrackingAreas()
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        onHoverChanged?(true)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        onHoverChanged?(false)
     }
 }
 

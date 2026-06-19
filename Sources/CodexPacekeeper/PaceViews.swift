@@ -3,23 +3,27 @@ import SwiftUI
 
 struct HUDView: View {
     let snapshot: UsageSnapshot
-    let isCollapsed: Bool
+    let isExpanded: Bool
 
     var body: some View {
         Group {
-            if isCollapsed {
-                CollapsedPaceSummaryView(snapshot: snapshot)
-            } else {
+            if isExpanded {
                 PaceSummaryView(snapshot: snapshot)
+            } else {
+                NotchCompactSummaryView(snapshot: snapshot)
             }
         }
-            .padding(isCollapsed ? 8 : 12)
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .padding(isExpanded ? 12 : 8)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                     .stroke(Color.primary.opacity(0.12), lineWidth: 1)
             )
-            .frame(width: isCollapsed ? 220 : 280)
+            .frame(width: isExpanded ? 280 : 168)
+    }
+
+    private var cornerRadius: CGFloat {
+        isExpanded ? 8 : 16
     }
 }
 
@@ -71,40 +75,32 @@ struct PaceSummaryView: View {
     }
 }
 
-private struct CollapsedPaceSummaryView: View {
+private struct NotchCompactSummaryView: View {
     let snapshot: UsageSnapshot
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 10) {
             Image(systemName: snapshot.stateSystemImageName)
-                .font(.caption.weight(.semibold))
+                .font(.caption.weight(.bold))
                 .foregroundStyle(iconColor)
-                .frame(width: 16)
+                .frame(width: 18, alignment: .leading)
 
-            if snapshot.hasUsageData {
-                Text(snapshot.primary.label.uppercased())
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .monospaced()
+            Spacer(minLength: 0)
 
-                Text(snapshot.primary.actualPercent.roundedPercent)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(snapshot.primary.status.hudColor)
-                    .monospacedDigit()
-
-                Text(snapshot.paceRecommendation.action)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            } else {
-                Text(snapshot.stateLabel.capitalized)
-                    .font(.caption.weight(.semibold))
-                    .lineLimit(1)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
+            Text(compactValue)
+                .font(.caption.weight(.bold))
+                .foregroundStyle(valueColor)
+                .monospacedDigit()
         }
-        .frame(maxWidth: .infinity, minHeight: 20, alignment: .leading)
+        .frame(maxWidth: .infinity, minHeight: 16)
+    }
+
+    private var compactValue: String {
+        snapshot.hasUsageData ? snapshot.primary.actualPercent.roundedPercent : "--%"
+    }
+
+    private var valueColor: Color {
+        snapshot.hasUsageData ? snapshot.primary.status.hudColor : .secondary
     }
 
     private var iconColor: Color {
