@@ -46,10 +46,7 @@ struct HUDView: View {
                 NotchCompactSummaryView(snapshot: snapshot, layout: layout)
             }
         }
-        .frame(
-            width: isExpanded ? layout.expandedSize.width : layout.compactSize.width,
-            height: isExpanded ? layout.expandedSize.height : layout.compactSize.height
-        )
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .shadow(color: .black.opacity(0.20), radius: 10, y: 3)
         .environment(\.colorScheme, .dark)
     }

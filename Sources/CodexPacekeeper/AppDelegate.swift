@@ -224,8 +224,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             return NSRect(x: 80, y: 640, width: size.width, height: size.height)
         }
 
+        let size = pixelAligned(size, for: screen)
+        let centerX = notchCenterX(for: screen) ?? screen.frame.midX
+
         return NSRect(
-            x: screen.frame.midX - size.width / 2,
+            x: centerX - size.width / 2,
             y: screen.frame.maxY - size.height,
             width: size.width,
             height: size.height
@@ -336,6 +339,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
         let gapWidth = rightArea.minX - leftArea.maxX
         return gapWidth > 0 ? gapWidth : nil
+    }
+
+    private func notchCenterX(for screen: NSScreen) -> CGFloat? {
+        guard
+            let leftArea = screen.auxiliaryTopLeftArea,
+            let rightArea = screen.auxiliaryTopRightArea
+        else {
+            return nil
+        }
+
+        let gapWidth = rightArea.minX - leftArea.maxX
+        guard gapWidth > 0 else {
+            return nil
+        }
+
+        return leftArea.maxX + gapWidth / 2
+    }
+
+    private func pixelAligned(_ size: NSSize, for screen: NSScreen) -> NSSize {
+        let scale = max(screen.backingScaleFactor, 1)
+        return NSSize(
+            width: (size.width * scale).rounded() / scale,
+            height: (size.height * scale).rounded() / scale
+        )
     }
 
     private func setHUDExpanded(_ isExpanded: Bool) {
