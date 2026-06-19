@@ -6,13 +6,14 @@ The product direction and MVP scope live in [docs/codex-pacekeeper-prd.md](docs/
 
 ## Current Status
 
-Current MVP baseline: `v0.1.0`.
+Current release target: `v0.2.0`.
 
 Functional SwiftUI app:
 
 - Swift Package Manager project
 - macOS `MenuBarExtra` shell
-- floating HUD shell using `NSPanel`
+- switchable notch island and floating HUD shells using `NSPanel`
+- drag docking between notch island and floating HUD modes
 - `~/.codex/auth.json` access token reading
 - ChatGPT WHAM usage API polling
 - pace calculation model for actual usage, recommended pace, delta, and status
@@ -57,7 +58,7 @@ Remaining MVP work:
 
 ## Distribution
 
-The v0.1.0 MVP should be distributed through GitHub Releases as
+Codex Pacekeeper should be distributed through GitHub Releases as
 `CodexPacekeeper.app.zip`.
 
 Create the release archive locally:

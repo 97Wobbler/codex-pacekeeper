@@ -1,5 +1,18 @@
 # Distribution Notes
 
+## v0.2.0 Release
+
+`v0.2.0` adds the notch island HUD line and keeps the original floating HUD
+available as a switchable mode.
+
+Included in this release:
+
+- switchable notch island and floating HUD display modes
+- drag docking from the notch island into floating mode
+- drag docking from floating mode back into the notch island
+- refined notch island width and hover expansion behavior
+- removal of the floating HUD opacity control
+
 ## v0.1.0 Baseline
 
 `v0.1.0` is the first MVP release line for Codex Pacekeeper.
@@ -80,19 +93,19 @@ Implemented near-term workflow:
 2. Build the release binary with `swift build -c release`.
 3. Create a minimal unsigned `.app` bundle around the executable.
 4. Zip `CodexPacekeeper.app` into `dist/CodexPacekeeper.app.zip`.
-5. Upload the zip to a GitHub Release tagged `v0.1.0`.
+5. Upload the zip to a GitHub Release tagged for the current version, such as `v0.2.0`.
 6. Install with `install.sh`.
 
 Release metadata defaults:
 
-- Version: `0.1.0`
-- Build number: `1`
+- Version: `0.2.0`
+- Build number: `2`
 - Bundle ID: `dev.whchoi.codex-pacekeeper`
 
 These can be overridden for packaging:
 
 ```sh
-VERSION=0.1.0 BUILD_NUMBER=1 BUNDLE_ID=dev.whchoi.codex-pacekeeper scripts/package-release.sh
+VERSION=0.2.0 BUILD_NUMBER=2 BUNDLE_ID=dev.whchoi.codex-pacekeeper scripts/package-release.sh
 ```
 
 Later:
