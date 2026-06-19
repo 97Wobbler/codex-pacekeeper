@@ -53,6 +53,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     private var isHUDExpanded = false
     private var isNotchPanelExpanded = false
     private var wantsHUDExpanded = false
+    private var isNotchDragActive = false
+    private var shouldCollapseAfterNotchDrag = false
+    private var notchDragOffset: CGFloat = 0
+    private var isNotchDetachReady = false
     private var hudFrameAnimationTimer: Timer?
     private var notchCollapseTimer: Timer?
     private var lastSuccessfulSnapshot: UsageSnapshot?
@@ -137,6 +141,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         isHUDExpanded = false
         isNotchPanelExpanded = false
         wantsHUDExpanded = false
+        resetNotchDragState()
         hudFrameAnimationTimer?.invalidate()
         hudFrameAnimationTimer = nil
         notchCollapseTimer?.invalidate()
@@ -251,13 +256,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
                 self?.setHUDExpanded(isHovered)
             }
         }
+        hostingView.onNotchDragBegan = { [weak self] in
+            self?.beginNotchDrag()
+        }
+        hostingView.onNotchDragChanged = { [weak self] deltaY in
+            self?.updateNotchDrag(deltaY: deltaY)
+        }
+        hostingView.onNotchDetachRequested = { [weak self] screenPoint in
+            self?.detachNotchHUDForContinuousDrag(at: screenPoint)
+        }
+        hostingView.onNotchDragEnded = { [weak self] screenPoint in
+            self?.finishNotchDrag(at: screenPoint)
+        }
+        hostingView.onFloatingDragEnded = { [weak self] in
+            self?.finishFloatingDrag()
+        }
         let panel = makeHUDPanel(frame: currentHUDFrame(size: currentHUDSize, reposition: true), hostingView: hostingView)
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(hudPanelDidMove),
-            name: NSWindow.didMoveNotification,
-            object: panel
-        )
 
         hudHostingView = hostingView
         hudPanel = panel
@@ -279,6 +293,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
                 displayMode: hudDisplayMode,
                 isNotchExpanded: true,
                 notchLayout: layout,
+                notchDragOffset: 0,
+                isNotchDetachReady: false,
                 isFloatingCollapsed: false
             ))
             hostingView.applyTransparentBackground()
@@ -330,12 +346,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             panel.hasShadow = false
             panel.isMovableByWindowBackground = false
             hostingView.canDragWindow = false
+            hostingView.canDetachFromNotch = true
         case .floating:
             panel.level = .floating
             panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
             panel.hasShadow = true
-            panel.isMovableByWindowBackground = true
+            panel.isMovableByWindowBackground = false
             hostingView.canDragWindow = true
+            hostingView.canDetachFromNotch = false
         }
 
         panel.alphaValue = hudDisplayMode == .floating ? CGFloat(hudOpacity) : 1
@@ -364,6 +382,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             return NSRect(x: 80, y: 640, width: size.width, height: size.height)
         }
 
+        return notchHUDFrame(size: size, on: screen)
+    }
+
+    private func notchHUDFrame(size: NSSize, on screen: NSScreen) -> NSRect {
         let size = pixelAligned(size, for: screen)
         let centerX = notchCenterX(for: screen) ?? screen.frame.midX
         let frame = NSRect(
@@ -416,14 +438,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         frame.size = size
         frame.origin.y = maxY - size.height
         return constrainedHUDFrame(frame, visibleFrame: hudPanel?.screen?.visibleFrame)
-    }
-
-    @objc private func hudPanelDidMove(_ notification: Notification) {
-        guard hudDisplayMode == .floating, let panel = notification.object as? NSPanel else {
-            return
-        }
-
-        persistHUDOrigin(panel.frame.origin)
     }
 
     @objc private func screenParametersDidChange(_ notification: Notification) {
@@ -567,6 +581,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             displayMode: hudDisplayMode,
             isNotchExpanded: isHUDExpanded,
             notchLayout: currentHUDLayout(),
+            notchDragOffset: notchDragOffset,
+            isNotchDetachReady: isNotchDetachReady,
             isFloatingCollapsed: isHUDCollapsed
         )
     }
@@ -647,8 +663,132 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         )
     }
 
+    private func beginNotchDrag() {
+        guard hudDisplayMode == .notchIsland, isHUDExpanded else {
+            return
+        }
+
+        isNotchDragActive = true
+        shouldCollapseAfterNotchDrag = false
+        notchCollapseTimer?.invalidate()
+        notchCollapseTimer = nil
+    }
+
+    private func updateNotchDrag(deltaY: CGFloat) {
+        guard hudDisplayMode == .notchIsland, isHUDExpanded, isNotchDragActive else {
+            return
+        }
+
+        let pullDistance = max(deltaY, 0)
+        notchDragOffset = min(pullDistance * 0.62, HUDDockingInteraction.notchDetachMaxOffset)
+        isNotchDetachReady = pullDistance >= HUDDockingInteraction.notchDetachThreshold
+        updateHUD()
+    }
+
+    private func detachNotchHUDForContinuousDrag(at screenPoint: NSPoint) {
+        guard hudDisplayMode == .notchIsland else {
+            return
+        }
+
+        isHUDCollapsed = false
+        UserDefaults.standard.set(false, forKey: Self.hudCollapsedDefaultsKey)
+
+        resetNotchDragState()
+        hudDisplayMode = .floating
+        UserDefaults.standard.set(HUDDisplayMode.floating.rawValue, forKey: HUDDisplayMode.defaultsKey)
+        isHUDExpanded = false
+        isNotchPanelExpanded = false
+        wantsHUDExpanded = false
+        notchCollapseTimer?.invalidate()
+        notchCollapseTimer = nil
+        hudFrameAnimationTimer?.invalidate()
+        hudFrameAnimationTimer = nil
+
+        configureHUDPanelForCurrentMode()
+        updateHUD()
+        placeFloatingHUDForDrag(at: screenPoint)
+        applyHUDVisibility()
+    }
+
+    private func finishNotchDrag(at screenPoint: NSPoint) {
+        guard hudDisplayMode == .notchIsland, isNotchDragActive else {
+            resetNotchDragState()
+            return
+        }
+
+        let shouldCollapse = shouldCollapseAfterNotchDrag
+        resetNotchDragState()
+        if shouldCollapse {
+            setHUDExpanded(false)
+        } else {
+            updateHUD(animated: true)
+        }
+    }
+
+    private func placeFloatingHUDForDrag(at screenPoint: NSPoint) {
+        guard let hudPanel else {
+            return
+        }
+
+        let size = FloatingHUDLayout.expandedSize
+        let targetFrame = constrainedHUDFrame(
+            NSRect(
+                x: screenPoint.x - size.width / 2,
+                y: screenPoint.y - size.height / 2,
+                width: size.width,
+                height: size.height
+            ),
+            visibleFrame: bestVisibleFrame(for: screenPoint)
+        )
+        hudPanel.setFrame(targetFrame, display: true)
+        hudPanel.contentView?.frame = NSRect(origin: .zero, size: targetFrame.size)
+        persistHUDOrigin(targetFrame.origin)
+    }
+
+    private func finishFloatingDrag() {
+        guard hudDisplayMode == .floating, let hudPanel else {
+            return
+        }
+
+        persistHUDOrigin(hudPanel.frame.origin)
+
+        if shouldDockFloatingHUD(frame: hudPanel.frame) {
+            setHUDDisplayMode(.notchIsland)
+        }
+    }
+
+    private func shouldDockFloatingHUD(frame: NSRect) -> Bool {
+        guard let screen = notchedHUDScreen() else {
+            return false
+        }
+
+        let layout = NotchHUDLayout(
+            notchWidth: notchWidth(for: screen),
+            topInset: screen.safeAreaInsets.top
+        )
+        let topCenter = NSPoint(x: frame.midX, y: frame.maxY)
+        let targetCenterX = notchCenterX(for: screen) ?? screen.frame.midX
+        let horizontalTolerance = max(layout.expandedSize.width / 2 + 48, 240)
+        let verticalDistanceFromTop = abs(screen.frame.maxY - topCenter.y)
+
+        return abs(topCenter.x - targetCenterX) <= horizontalTolerance
+            && verticalDistanceFromTop <= 92
+    }
+
+    private func resetNotchDragState() {
+        isNotchDragActive = false
+        shouldCollapseAfterNotchDrag = false
+        notchDragOffset = 0
+        isNotchDetachReady = false
+    }
+
     private func setHUDExpanded(_ isExpanded: Bool) {
         guard hudDisplayMode == .notchIsland else {
+            return
+        }
+
+        if isNotchDragActive && !isExpanded {
+            shouldCollapseAfterNotchDrag = true
             return
         }
 
@@ -746,10 +886,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
 private final class PaceHUDPanel: NSPanel {}
 
+@MainActor
 private final class HUDHostingView: NSHostingView<HUDView> {
     var canDragWindow = false
+    var canDetachFromNotch = false
     var onHoverChanged: ((Bool) -> Void)?
+    var onNotchDragBegan: (() -> Void)?
+    var onNotchDragChanged: ((CGFloat) -> Void)?
+    var onNotchDetachRequested: ((NSPoint) -> Void)?
+    var onNotchDragEnded: ((NSPoint) -> Void)?
+    var onFloatingDragEnded: (() -> Void)?
     private var hoverTrackingArea: NSTrackingArea?
+    private var notchDragStartPoint: NSPoint?
+    private var floatingDragOffset: NSSize?
 
     override var intrinsicContentSize: NSSize {
         NSSize(width: NSView.noIntrinsicMetric, height: NSView.noIntrinsicMetric)
@@ -788,11 +937,90 @@ private final class HUDHostingView: NSHostingView<HUDView> {
     }
 
     override func mouseDown(with event: NSEvent) {
+        let screenPoint = screenPoint(for: event)
+
         if canDragWindow {
-            window?.performDrag(with: event)
+            beginFloatingDrag(at: screenPoint)
+        } else if canDetachFromNotch {
+            notchDragStartPoint = event.locationInWindow
+            onNotchDragBegan?()
         } else {
             super.mouseDown(with: event)
         }
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        let screenPoint = screenPoint(for: event)
+
+        if floatingDragOffset != nil {
+            moveFloatingWindow(to: screenPoint)
+            return
+        }
+
+        guard canDetachFromNotch, let notchDragStartPoint else {
+            super.mouseDragged(with: event)
+            return
+        }
+
+        let deltaY = notchDragStartPoint.y - event.locationInWindow.y
+        if deltaY >= HUDDockingInteraction.notchDetachThreshold {
+            self.notchDragStartPoint = nil
+            onNotchDetachRequested?(screenPoint)
+            beginFloatingDrag(at: screenPoint)
+            moveFloatingWindow(to: screenPoint)
+            return
+        }
+
+        onNotchDragChanged?(deltaY)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        if floatingDragOffset != nil {
+            floatingDragOffset = nil
+            onFloatingDragEnded?()
+            return
+        }
+
+        guard canDetachFromNotch, notchDragStartPoint != nil else {
+            super.mouseUp(with: event)
+            return
+        }
+
+        notchDragStartPoint = nil
+
+        if let window {
+            onNotchDragEnded?(window.convertPoint(toScreen: event.locationInWindow))
+        } else {
+            onNotchDragEnded?(event.locationInWindow)
+        }
+    }
+
+    private func beginFloatingDrag(at screenPoint: NSPoint) {
+        guard let window else {
+            return
+        }
+
+        floatingDragOffset = NSSize(
+            width: screenPoint.x - window.frame.origin.x,
+            height: screenPoint.y - window.frame.origin.y
+        )
+    }
+
+    private func moveFloatingWindow(to screenPoint: NSPoint) {
+        guard let window, let floatingDragOffset else {
+            return
+        }
+
+        var frame = window.frame
+        frame.origin = NSPoint(
+            x: screenPoint.x - floatingDragOffset.width,
+            y: screenPoint.y - floatingDragOffset.height
+        )
+        window.setFrame(frame, display: true)
+    }
+
+    private func screenPoint(for event: NSEvent) -> NSPoint {
+        NSEvent.mouseLocation
     }
 }
 

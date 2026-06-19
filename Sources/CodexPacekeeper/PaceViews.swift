@@ -30,6 +30,11 @@ enum NotchHUDAnimation {
     static let duration: Double = 0.18
 }
 
+enum HUDDockingInteraction {
+    static let notchDetachThreshold: CGFloat = 28
+    static let notchDetachMaxOffset: CGFloat = 24
+}
+
 struct NotchHUDLayout: Equatable {
     private static let fallbackNotchWidth: CGFloat = 184
     private static let fallbackTopInset: CGFloat = 32
@@ -60,6 +65,8 @@ struct HUDView: View {
     let displayMode: HUDDisplayMode
     let isNotchExpanded: Bool
     let notchLayout: NotchHUDLayout
+    let notchDragOffset: CGFloat
+    let isNotchDetachReady: Bool
     let isFloatingCollapsed: Bool
 
     var body: some View {
@@ -92,9 +99,12 @@ struct HUDView: View {
             .frame(width: notchVisibleSize.width, height: notchVisibleSize.height, alignment: .top)
             .clipped()
             .shadow(color: .black.opacity(0.20), radius: 10, y: 3)
+            .scaleEffect(isNotchDetachReady ? 0.985 : 1, anchor: .top)
+            .offset(y: notchDragOffset)
         }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .animation(.easeOut(duration: NotchHUDAnimation.duration), value: isNotchExpanded)
+            .animation(.interactiveSpring(response: 0.24, dampingFraction: 0.82), value: isNotchDetachReady)
             .environment(\.colorScheme, .dark)
     }
 
