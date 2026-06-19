@@ -15,9 +15,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     }()
 
     private static let hudVisibilityDefaultsKey = "showsHUD"
-    private static let expandedHUDSize = NSSize(width: 280, height: 120)
-    private static let compactHUDSize = NSSize(width: 168, height: 32)
-    private static let notchTopPadding: CGFloat = 4
     private let authTokenStore = CodexAuthTokenStore()
     private let usageClient = WhamUsageClient()
     private let usageHistoryStore = UsageHistoryStore()
@@ -176,7 +173,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
     private func createDemoHUDs() {
         let snapshots = DemoUsageSnapshots.make()
-        let panelSize = Self.expandedHUDSize
+        let layout = fallbackHUDLayout()
+        let panelSize = layout.expandedSize
         let visibleFrame = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 900, height: 800)
         let startX = visibleFrame.minX + 80
         var y = visibleFrame.maxY - panelSize.height - 60
@@ -186,7 +184,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
                 frame: NSRect(x: startX, y: y, width: panelSize.width, height: panelSize.height),
                 hostingView: HUDHostingView(rootView: HUDView(
                     snapshot: snapshot,
-                    isExpanded: true
+                    isExpanded: true,
+                    layout: layout
                 ))
             )
             panel.orderFrontRegardless()
@@ -216,13 +215,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     }
 
     private func notchHUDFrame(size: NSSize) -> NSRect {
-        guard let screen = NSScreen.main ?? NSScreen.screens.first else {
+        guard let screen = currentHUDScreen() else {
             return NSRect(x: 80, y: 640, width: size.width, height: size.height)
         }
 
         return NSRect(
             x: screen.frame.midX - size.width / 2,
-            y: screen.frame.maxY - size.height - Self.notchTopPadding,
+            y: screen.frame.maxY - size.height,
             width: size.width,
             height: size.height
         )
@@ -234,7 +233,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     }
 
     private var currentHUDSize: NSSize {
-        isHUDExpanded ? Self.expandedHUDSize : Self.compactHUDSize
+        let layout = currentHUDLayout()
+        return isHUDExpanded ? layout.expandedSize : layout.compactSize
     }
 
     private func resizeHUDPanel(animated: Bool) {
@@ -257,7 +257,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     }
 
     private func makeHUDView() -> HUDView {
-        HUDView(snapshot: snapshot, isExpanded: isHUDExpanded)
+        HUDView(snapshot: snapshot, isExpanded: isHUDExpanded, layout: currentHUDLayout())
+    }
+
+    private func currentHUDScreen() -> NSScreen? {
+        NSScreen.main ?? NSScreen.screens.first
+    }
+
+    private func currentHUDLayout() -> NotchHUDLayout {
+        guard let screen = currentHUDScreen() else {
+            return fallbackHUDLayout()
+        }
+
+        return NotchHUDLayout(
+            notchWidth: notchWidth(for: screen),
+            topInset: screen.safeAreaInsets.top
+        )
+    }
+
+    private func fallbackHUDLayout() -> NotchHUDLayout {
+        NotchHUDLayout(notchWidth: nil, topInset: 32)
+    }
+
+    private func notchWidth(for screen: NSScreen) -> CGFloat? {
+        guard
+            let leftArea = screen.auxiliaryTopLeftArea,
+            let rightArea = screen.auxiliaryTopRightArea
+        else {
+            return nil
+        }
+
+        let gapWidth = rightArea.minX - leftArea.maxX
+        return gapWidth > 0 ? gapWidth : nil
     }
 
     private func setHUDExpanded(_ isExpanded: Bool) {

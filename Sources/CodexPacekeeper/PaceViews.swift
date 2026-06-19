@@ -1,29 +1,83 @@
 import CodexPacekeeperCore
 import SwiftUI
 
+struct NotchHUDLayout: Equatable {
+    private static let fallbackNotchWidth: CGFloat = 184
+    private static let fallbackTopInset: CGFloat = 32
+
+    let notchWidth: CGFloat
+    let topInset: CGFloat
+
+    init(notchWidth: CGFloat?, topInset: CGFloat) {
+        self.notchWidth = max(notchWidth ?? Self.fallbackNotchWidth, Self.fallbackNotchWidth)
+        self.topInset = max(topInset, Self.fallbackTopInset)
+    }
+
+    var compactSize: CGSize {
+        CGSize(width: max(notchWidth + 144, 320), height: max(topInset + 24, 54))
+    }
+
+    var expandedSize: CGSize {
+        CGSize(width: max(compactSize.width + 32, 360), height: max(topInset + 126, 154))
+    }
+
+    var topBandHeight: CGFloat {
+        max(topInset, 32)
+    }
+}
+
 struct HUDView: View {
     let snapshot: UsageSnapshot
     let isExpanded: Bool
+    let layout: NotchHUDLayout
 
     var body: some View {
-        Group {
+        ZStack(alignment: .top) {
+            NotchIslandShape(bottomRadius: isExpanded ? 18 : 20)
+                .fill(Color.black)
+                .overlay(
+                    NotchIslandShape(bottomRadius: isExpanded ? 18 : 20)
+                        .stroke(Color.white.opacity(0.10), lineWidth: 1)
+                )
+
             if isExpanded {
-                PaceSummaryView(snapshot: snapshot)
+                NotchExpandedSummaryView(snapshot: snapshot, layout: layout)
             } else {
-                NotchCompactSummaryView(snapshot: snapshot)
+                NotchCompactSummaryView(snapshot: snapshot, layout: layout)
             }
         }
-            .padding(isExpanded ? 12 : 8)
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .stroke(Color.primary.opacity(0.12), lineWidth: 1)
-            )
-            .frame(width: isExpanded ? 280 : 168)
+        .frame(
+            width: isExpanded ? layout.expandedSize.width : layout.compactSize.width,
+            height: isExpanded ? layout.expandedSize.height : layout.compactSize.height
+        )
+        .shadow(color: .black.opacity(0.20), radius: 10, y: 3)
+        .environment(\.colorScheme, .dark)
     }
+}
 
-    private var cornerRadius: CGFloat {
-        isExpanded ? 8 : 16
+private struct NotchIslandShape: Shape {
+    let bottomRadius: CGFloat
+
+    func path(in rect: CGRect) -> Path {
+        let radius = min(bottomRadius, rect.width / 2, rect.height / 2)
+        var path = Path()
+
+        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - radius))
+        path.addQuadCurve(
+            to: CGPoint(x: rect.maxX - radius, y: rect.maxY),
+            control: CGPoint(x: rect.maxX, y: rect.maxY)
+        )
+        path.addLine(to: CGPoint(x: rect.minX + radius, y: rect.maxY))
+        path.addQuadCurve(
+            to: CGPoint(x: rect.minX, y: rect.maxY - radius),
+            control: CGPoint(x: rect.minX, y: rect.maxY)
+        )
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.minY))
+        path.closeSubpath()
+
+        return path
     }
 }
 
@@ -77,22 +131,25 @@ struct PaceSummaryView: View {
 
 private struct NotchCompactSummaryView: View {
     let snapshot: UsageSnapshot
+    let layout: NotchHUDLayout
 
     var body: some View {
         HStack(spacing: 10) {
             Image(systemName: snapshot.stateSystemImageName)
-                .font(.caption.weight(.bold))
+                .font(.system(size: 13, weight: .bold))
                 .foregroundStyle(iconColor)
-                .frame(width: 18, alignment: .leading)
+                .frame(width: 24, alignment: .leading)
 
             Spacer(minLength: 0)
 
             Text(compactValue)
-                .font(.caption.weight(.bold))
+                .font(.system(size: 13, weight: .bold, design: .rounded))
                 .foregroundStyle(valueColor)
                 .monospacedDigit()
         }
-        .frame(maxWidth: .infinity, minHeight: 16)
+        .padding(.horizontal, 24)
+        .frame(maxWidth: .infinity)
+        .frame(height: layout.topBandHeight)
     }
 
     private var compactValue: String {
@@ -113,6 +170,21 @@ private struct NotchCompactSummaryView: View {
             return .orange
         case .error:
             return .red
+        }
+    }
+}
+
+private struct NotchExpandedSummaryView: View {
+    let snapshot: UsageSnapshot
+    let layout: NotchHUDLayout
+
+    var body: some View {
+        VStack(spacing: 8) {
+            NotchCompactSummaryView(snapshot: snapshot, layout: layout)
+
+            PaceSummaryView(snapshot: snapshot)
+                .padding(.horizontal, 14)
+                .padding(.bottom, 12)
         }
     }
 }
