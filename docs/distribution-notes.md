@@ -110,6 +110,13 @@ VERSION=0.2.0 BUILD_NUMBER=2 BUNDLE_ID=dev.whchoi.codex-pacekeeper scripts/packa
 
 Later:
 
+- Teach `install.sh` to stop a running app, replace the installed bundle, and
+  relaunch from a stable install path.
+- Standardize the user install path as `~/Applications/CodexPacekeeper.app`.
+- Add login item registration or repair so startup always points at the stable
+  installed app instead of a repository-local `dist/CodexPacekeeper.app`.
+- Add a documented manual update flow for personal use before automatic updates
+  are implemented.
 - Add Developer ID code signing.
 - Add notarization.
 - Consider a `.dmg` package.
