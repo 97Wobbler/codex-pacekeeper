@@ -1,6 +1,35 @@
 import CodexPacekeeperCore
 import SwiftUI
 
+enum HUDDisplayMode: String, CaseIterable, Identifiable {
+    case notchIsland
+    case floating
+
+    static let defaultsKey = "hudDisplayMode"
+
+    var id: String {
+        rawValue
+    }
+
+    var title: String {
+        switch self {
+        case .notchIsland:
+            return "Notch Island"
+        case .floating:
+            return "Floating"
+        }
+    }
+}
+
+enum FloatingHUDLayout {
+    static let collapsedSize = CGSize(width: 220, height: 44)
+    static let expandedSize = CGSize(width: 280, height: 120)
+}
+
+enum NotchHUDAnimation {
+    static let duration: Double = 0.18
+}
+
 struct NotchHUDLayout: Equatable {
     private static let fallbackNotchWidth: CGFloat = 184
     private static let fallbackTopInset: CGFloat = 32
@@ -28,27 +57,66 @@ struct NotchHUDLayout: Equatable {
 
 struct HUDView: View {
     let snapshot: UsageSnapshot
-    let isExpanded: Bool
-    let layout: NotchHUDLayout
+    let displayMode: HUDDisplayMode
+    let isNotchExpanded: Bool
+    let notchLayout: NotchHUDLayout
+    let isFloatingCollapsed: Bool
 
     var body: some View {
-        ZStack(alignment: .top) {
-            NotchIslandShape(bottomRadius: isExpanded ? 18 : 20)
-                .fill(Color.black)
-                .overlay(
-                    NotchIslandShape(bottomRadius: isExpanded ? 18 : 20)
-                        .stroke(Color.white.opacity(0.10), lineWidth: 1)
-                )
+        switch displayMode {
+        case .notchIsland:
+            notchBody
+        case .floating:
+            floatingBody
+        }
+    }
 
-            if isExpanded {
-                NotchExpandedSummaryView(snapshot: snapshot, layout: layout)
+    private var notchBody: some View {
+        ZStack(alignment: .top) {
+            ZStack(alignment: .top) {
+                NotchIslandShape(bottomRadius: isNotchExpanded ? 18 : 20)
+                    .fill(Color.black)
+                    .overlay(
+                        NotchIslandShape(bottomRadius: isNotchExpanded ? 18 : 20)
+                            .stroke(Color.white.opacity(0.10), lineWidth: 1)
+                    )
+
+                if isNotchExpanded {
+                    NotchExpandedSummaryView(snapshot: snapshot, layout: notchLayout)
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                } else {
+                    NotchCompactSummaryView(snapshot: snapshot, layout: notchLayout)
+                        .transition(.opacity)
+                }
+            }
+            .frame(width: notchVisibleSize.width, height: notchVisibleSize.height, alignment: .top)
+            .clipped()
+            .shadow(color: .black.opacity(0.20), radius: 10, y: 3)
+        }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .animation(.easeOut(duration: NotchHUDAnimation.duration), value: isNotchExpanded)
+            .environment(\.colorScheme, .dark)
+    }
+
+    private var notchVisibleSize: CGSize {
+        isNotchExpanded ? notchLayout.expandedSize : notchLayout.compactSize
+    }
+
+    private var floatingBody: some View {
+        Group {
+            if isFloatingCollapsed {
+                FloatingCollapsedSummaryView(snapshot: snapshot)
             } else {
-                NotchCompactSummaryView(snapshot: snapshot, layout: layout)
+                PaceSummaryView(snapshot: snapshot)
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .shadow(color: .black.opacity(0.20), radius: 10, y: 3)
-        .environment(\.colorScheme, .dark)
+            .padding(isFloatingCollapsed ? 8 : 12)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(Color.primary.opacity(0.12), lineWidth: 1)
+            )
+            .frame(width: isFloatingCollapsed ? FloatingHUDLayout.collapsedSize.width : FloatingHUDLayout.expandedSize.width)
     }
 }
 
@@ -182,6 +250,56 @@ private struct NotchExpandedSummaryView: View {
             PaceSummaryView(snapshot: snapshot)
                 .padding(.horizontal, 14)
                 .padding(.bottom, 12)
+        }
+    }
+}
+
+private struct FloatingCollapsedSummaryView: View {
+    let snapshot: UsageSnapshot
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: snapshot.stateSystemImageName)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(iconColor)
+                .frame(width: 16)
+
+            if snapshot.hasUsageData {
+                Text(snapshot.primary.label.uppercased())
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .monospaced()
+
+                Text(snapshot.primary.actualPercent.roundedPercent)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(snapshot.primary.status.hudColor)
+                    .monospacedDigit()
+
+                Text(snapshot.paceRecommendation.action)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                Text(snapshot.stateLabel.capitalized)
+                    .font(.caption.weight(.semibold))
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: 20, alignment: .leading)
+    }
+
+    private var iconColor: Color {
+        switch snapshot.state {
+        case .loading:
+            return .blue
+        case .fresh:
+            return snapshot.primary.status.hudColor
+        case .stale:
+            return .orange
+        case .error:
+            return .red
         }
     }
 }
