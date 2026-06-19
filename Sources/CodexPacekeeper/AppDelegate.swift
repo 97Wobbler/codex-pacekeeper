@@ -14,13 +14,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         return UserDefaults.standard.bool(forKey: hudVisibilityDefaultsKey)
     }()
     @Published private(set) var isHUDCollapsed: Bool = UserDefaults.standard.bool(forKey: hudCollapsedDefaultsKey)
-    @Published private(set) var hudOpacity: Double = {
-        if UserDefaults.standard.object(forKey: hudOpacityDefaultsKey) == nil {
-            return defaultHUDOpacity
-        }
-
-        return normalizedHUDOpacity(UserDefaults.standard.double(forKey: hudOpacityDefaultsKey))
-    }()
     @Published private(set) var hudDisplayMode: HUDDisplayMode = {
         guard
             let rawValue = UserDefaults.standard.string(forKey: HUDDisplayMode.defaultsKey),
@@ -34,12 +27,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
     private static let hudVisibilityDefaultsKey = "showsHUD"
     private static let hudCollapsedDefaultsKey = "hudCollapsed"
-    private static let hudOpacityDefaultsKey = "hudOpacity"
     private static let hudOriginXDefaultsKey = "hudOriginX"
     private static let hudOriginYDefaultsKey = "hudOriginY"
-    private static let defaultHUDOpacity = 1.0
-    private static let minHUDOpacity = 0.35
-    private static let maxHUDOpacity = 1.0
     private let authTokenStore = CodexAuthTokenStore()
     private let usageClient = WhamUsageClient()
     private let usageHistoryStore = UsageHistoryStore()
@@ -165,13 +154,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         resizeHUDPanel(to: currentHUDSize, animated: true)
     }
 
-    func setHUDOpacity(_ opacity: Double) {
-        let normalizedOpacity = Self.normalizedHUDOpacity(opacity)
-        hudOpacity = normalizedOpacity
-        UserDefaults.standard.set(normalizedOpacity, forKey: Self.hudOpacityDefaultsKey)
-        applyHUDOpacity()
-    }
-
     func setMenuBarState(_ menuBarState: MenuBarState) {
         self.menuBarState = menuBarState
         if menuBarState.snapshot != snapshot {
@@ -181,15 +163,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
     private func applyHUDVisibility() {
         if isHUDVisible {
-            applyHUDOpacity()
+            hudPanel?.alphaValue = 1
             hudPanel?.orderFrontRegardless()
         } else {
             hudPanel?.orderOut(nil)
         }
-    }
-
-    private func applyHUDOpacity() {
-        hudPanel?.alphaValue = hudDisplayMode == .floating ? CGFloat(hudOpacity) : 1
     }
 
     private func startPolling() {
@@ -356,7 +334,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             hostingView.canDetachFromNotch = false
         }
 
-        panel.alphaValue = hudDisplayMode == .floating ? CGFloat(hudOpacity) : 1
+        panel.alphaValue = 1
     }
 
     private func demoHUDSize(layout: NotchHUDLayout) -> NSSize {
@@ -879,9 +857,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         return error.localizedDescription
     }
 
-    private static func normalizedHUDOpacity(_ opacity: Double) -> Double {
-        min(max(opacity, minHUDOpacity), maxHUDOpacity)
-    }
 }
 
 private final class PaceHUDPanel: NSPanel {}

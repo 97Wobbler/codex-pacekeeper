@@ -13,7 +13,6 @@ struct CodexPacekeeperApp: App {
     @AppStorage("showsHUD") private var showsHUD = true
     @AppStorage(HUDDisplayMode.defaultsKey) private var hudDisplayModeRawValue = HUDDisplayMode.notchIsland.rawValue
     @AppStorage("hudCollapsed") private var hudCollapsed = false
-    @AppStorage("hudOpacity") private var hudOpacity = 1.0
 
     var body: some Scene {
         appDelegate.setMenuBarState(menuBarState)
@@ -31,14 +30,6 @@ struct CodexPacekeeperApp: App {
 
             if hudDisplayMode == .floating {
                 Toggle("Collapse HUD", isOn: hudCollapsedBinding)
-
-                Divider()
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("HUD Opacity \(hudOpacityPercent)")
-                    Slider(value: hudOpacityBinding, in: 0.35...1.0, step: 0.05)
-                        .frame(width: 160)
-                }
 
                 Divider()
             } else {
@@ -62,10 +53,6 @@ struct CodexPacekeeperApp: App {
 
     private var hudDisplayMode: HUDDisplayMode {
         HUDDisplayMode(rawValue: hudDisplayModeRawValue) ?? .notchIsland
-    }
-
-    private var hudOpacityPercent: String {
-        "\(Int((hudOpacity * 100).rounded()))%"
     }
 
     private var hudVisibilityBinding: Binding<Bool> {
@@ -94,17 +81,6 @@ struct CodexPacekeeperApp: App {
             set: { newValue in
                 hudCollapsed = newValue
                 appDelegate.setHUDCollapsed(newValue)
-            }
-        )
-    }
-
-    private var hudOpacityBinding: Binding<Double> {
-        Binding(
-            get: { hudOpacity },
-            set: { newValue in
-                let normalizedValue = min(max(newValue, 0.35), 1.0)
-                hudOpacity = normalizedValue
-                appDelegate.setHUDOpacity(normalizedValue)
             }
         )
     }
