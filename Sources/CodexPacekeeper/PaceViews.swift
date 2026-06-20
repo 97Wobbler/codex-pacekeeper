@@ -69,7 +69,8 @@ struct NotchHUDLayout: Equatable {
     func expandedSize(providerCount: Int, staleCount: Int) -> CGSize {
         let visibleProviders = max(providerCount, 1)
         let extraProviders = max(visibleProviders - 1, 0)
-        let extraHeight = CGFloat(extraProviders * 104 + staleCount * 28)
+        let multiProviderMargin: CGFloat = extraProviders > 0 ? 48 : 0
+        let extraHeight = CGFloat(extraProviders * 118 + staleCount * 34) + multiProviderMargin
         return CGSize(width: max(compactSize.width + 32, 328), height: max(topInset + 126 + extraHeight, 154 + extraHeight))
     }
 
