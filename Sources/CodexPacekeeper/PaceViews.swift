@@ -95,9 +95,11 @@ struct HUDView: View {
     let isNotchExpanded: Bool
     let notchLayout: NotchHUDLayout
     let notchCompactProvider: UsageProvider
+    let notchExpandedHeight: CGFloat?
     let notchDragOffset: CGFloat
     let isNotchDetachReady: Bool
     let isFloatingCollapsed: Bool
+    let onNotchExpandedHeightChanged: ((CGFloat) -> Void)?
 
     var body: some View {
         switch displayMode {
@@ -144,12 +146,29 @@ struct HUDView: View {
             .animation(.easeOut(duration: NotchHUDAnimation.duration), value: isNotchExpanded)
             .animation(.interactiveSpring(response: 0.24, dampingFraction: 0.82), value: isNotchDetachReady)
             .environment(\.colorScheme, .dark)
+            .onPreferenceChange(NotchExpandedContentHeightPreferenceKey.self) { height in
+                guard isNotchExpanded, height > 0 else {
+                    return
+                }
+
+                onNotchExpandedHeightChanged?(height)
+            }
     }
 
     private var notchVisibleSize: CGSize {
-        isNotchExpanded
-            ? notchLayout.expandedSize(providerCount: dashboard.providers.count, staleCount: dashboard.staleProviderCount)
-            : notchLayout.compactSize
+        if !isNotchExpanded {
+            return notchLayout.compactSize
+        }
+
+        let fallbackSize = notchLayout.expandedSize(
+            providerCount: dashboard.providers.count,
+            staleCount: dashboard.staleProviderCount
+        )
+        guard let notchExpandedHeight else {
+            return fallbackSize
+        }
+
+        return CGSize(width: fallbackSize.width, height: notchExpandedHeight)
     }
 
     private var floatingBody: some View {
@@ -167,6 +186,14 @@ struct HUDView: View {
                     .stroke(Color.primary.opacity(0.12), lineWidth: 1)
             )
             .frame(width: isFloatingCollapsed ? FloatingHUDLayout.collapsedSize.width : FloatingHUDLayout.expandedSize.width)
+    }
+}
+
+private struct NotchExpandedContentHeightPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
     }
 }
 
@@ -368,6 +395,15 @@ private struct NotchExpandedSummaryView: View {
                 .padding(.horizontal, 14)
                 .padding(.bottom, 10)
         }
+        .fixedSize(horizontal: false, vertical: true)
+        .background(
+            GeometryReader { proxy in
+                Color.clear.preference(
+                    key: NotchExpandedContentHeightPreferenceKey.self,
+                    value: proxy.size.height
+                )
+            }
+        )
     }
 }
 

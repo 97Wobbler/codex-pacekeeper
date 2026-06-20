@@ -62,6 +62,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     private var shouldCollapseAfterNotchDrag = false
     private var notchDragOffset: CGFloat = 0
     private var isNotchDetachReady = false
+    private var notchExpandedMeasuredHeight: CGFloat?
     private var hudFrameAnimationTimer: Timer?
     private var notchCollapseTimer: Timer?
     private var lastSuccessfulSnapshots: [UsageProvider: UsageSnapshot] = [:]
@@ -146,6 +147,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         isHUDExpanded = false
         isNotchPanelExpanded = false
         wantsHUDExpanded = false
+        notchExpandedMeasuredHeight = nil
         resetNotchDragState()
         hudFrameAnimationTimer?.invalidate()
         hudFrameAnimationTimer = nil
@@ -263,6 +265,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             )
         }
 
+        prepareNotchForExpandedContentChange()
         updateHUD()
     }
 
@@ -371,9 +374,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
                 isNotchExpanded: true,
                 notchLayout: layout,
                 notchCompactProvider: notchCompactProvider,
+                notchExpandedHeight: nil,
                 notchDragOffset: 0,
                 isNotchDetachReady: false,
-                isFloatingCollapsed: false
+                isFloatingCollapsed: false,
+                onNotchExpandedHeightChanged: nil
             ))
             hostingView.applyTransparentBackground()
             let panel = makeHUDPanel(
@@ -529,6 +534,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             return
         }
 
+        notchExpandedMeasuredHeight = nil
         updateHUD()
         resizeHUDPanel(to: currentHUDSize, animated: false, reposition: true)
     }
@@ -584,13 +590,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         case .notchIsland:
             let layout = currentHUDLayout()
             return isNotchPanelExpanded
-                ? layout.expandedSize(providerCount: dashboard.providers.count, staleCount: dashboard.staleProviderCount)
+                ? notchExpandedSize(layout: layout)
                 : layout.compactSize
         case .floating:
             return isHUDCollapsed
                 ? FloatingHUDLayout.collapsedSize
                 : FloatingHUDLayout.expandedSize(providerCount: dashboard.providers.count, staleCount: dashboard.staleProviderCount)
         }
+    }
+
+    private func notchExpandedSize(layout: NotchHUDLayout) -> NSSize {
+        let fallbackSize = layout.expandedSize(
+            providerCount: dashboard.providers.count,
+            staleCount: dashboard.staleProviderCount
+        )
+        guard let notchExpandedMeasuredHeight else {
+            return fallbackSize
+        }
+
+        return NSSize(
+            width: fallbackSize.width,
+            height: max(layout.compactSize.height, notchExpandedMeasuredHeight)
+        )
     }
 
     private func resizeHUDPanel(to targetSize: NSSize, animated: Bool, reposition: Bool = false) {
@@ -670,10 +691,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             isNotchExpanded: isHUDExpanded,
             notchLayout: currentHUDLayout(),
             notchCompactProvider: notchCompactProvider,
+            notchExpandedHeight: notchExpandedMeasuredHeight,
             notchDragOffset: notchDragOffset,
             isNotchDetachReady: isNotchDetachReady,
-            isFloatingCollapsed: isHUDCollapsed
+            isFloatingCollapsed: isHUDCollapsed,
+            onNotchExpandedHeightChanged: { [weak self] height in
+                Task { @MainActor [weak self] in
+                    self?.setNotchExpandedMeasuredHeight(height)
+                }
+            }
         )
+    }
+
+    private func prepareNotchForExpandedContentChange() {
+        guard hudDisplayMode == .notchIsland, isNotchPanelExpanded else {
+            return
+        }
+
+        notchExpandedMeasuredHeight = nil
+        resizeHUDPanel(to: currentHUDSize, animated: false, reposition: true)
+    }
+
+    private func setNotchExpandedMeasuredHeight(_ measuredHeight: CGFloat) {
+        guard hudDisplayMode == .notchIsland, isNotchPanelExpanded, isHUDExpanded else {
+            return
+        }
+
+        let normalizedHeight = measuredHeight.rounded(.up)
+        guard notchExpandedMeasuredHeight.map({ abs($0 - normalizedHeight) > 0.5 }) ?? true else {
+            return
+        }
+
+        notchExpandedMeasuredHeight = normalizedHeight
+        updateHUD()
+        resizeHUDPanel(to: currentHUDSize, animated: false, reposition: true)
     }
 
     private func currentHUDScreen() -> NSScreen? {
@@ -788,6 +839,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         isHUDExpanded = false
         isNotchPanelExpanded = false
         wantsHUDExpanded = false
+        notchExpandedMeasuredHeight = nil
         notchCollapseTimer?.invalidate()
         notchCollapseTimer = nil
         hudFrameAnimationTimer?.invalidate()
@@ -896,8 +948,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
         if isExpanded {
             isNotchPanelExpanded = true
+            notchExpandedMeasuredHeight = nil
             resizeHUDPanel(
-                to: layout.expandedSize(providerCount: dashboard.providers.count, staleCount: dashboard.staleProviderCount),
+                to: notchExpandedSize(layout: layout),
                 animated: false,
                 reposition: true
             )
@@ -919,6 +972,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
                     }
 
                     self.isNotchPanelExpanded = false
+                    self.notchExpandedMeasuredHeight = nil
                     self.resizeHUDPanel(to: layout.compactSize, animated: false, reposition: true)
                     if self.notchCollapseTimer === timer {
                         self.notchCollapseTimer = nil
