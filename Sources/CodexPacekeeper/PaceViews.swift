@@ -212,10 +212,10 @@ private struct ProviderSummaryView: View {
                 PaceRow(reading: snapshot.primary, now: snapshot.lastRefreshedAt)
                 PaceRow(reading: snapshot.weekly, now: snapshot.lastRefreshedAt)
             } else {
-                StatusOnlyView(snapshot: snapshot)
+                ProviderStatusOnlyView(provider: providerSnapshot.provider, snapshot: snapshot)
             }
 
-            if snapshot.state != .fresh {
+            if snapshot.hasUsageData && snapshot.state != .fresh {
                 StaleStatusView(snapshot: snapshot)
             }
         }
@@ -430,6 +430,41 @@ private struct StatusOnlyView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, 4)
+    }
+}
+
+private struct ProviderStatusOnlyView: View {
+    let provider: UsageProvider
+    let snapshot: UsageSnapshot
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Text(provider.displayName.uppercased())
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .frame(width: 52, alignment: .leading)
+
+                Image(systemName: snapshot.stateSystemImageName)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 18)
+
+                Text(snapshot.stateLabel.capitalized)
+                    .font(.subheadline.weight(.semibold))
+                    .lineLimit(1)
+
+                Spacer(minLength: 0)
+            }
+
+            if let message = snapshot.message {
+                Text(message)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+        }
     }
 }
 

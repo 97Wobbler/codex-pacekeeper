@@ -196,7 +196,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         let claudeResult = loadClaudeUsage()
         let results = await [codexResult, claudeResult]
         var providerSnapshots: [ProviderUsageSnapshot] = []
-        var messages: [String] = []
 
         for result in results {
             switch result {
@@ -209,10 +208,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
                 providerSnapshots.append(ProviderUsageSnapshot(provider: provider, snapshot: pausedSnapshot))
                 deliverNotificationsIfNeeded(for: provider, snapshot: pausedSnapshot)
             case .failure(let provider, let error):
-                if shouldHideFailure(provider: provider, error: error) {
-                    continue
-                }
-
                 let message = friendlyMessage(for: error)
                 if let lastSuccessfulSnapshot = lastSuccessfulSnapshots[provider] {
                     providerSnapshots.append(
@@ -222,7 +217,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
                         )
                     )
                 } else {
-                    messages.append("\(provider.displayName): \(message)")
+                    providerSnapshots.append(
+                        ProviderUsageSnapshot(
+                            provider: provider,
+                            snapshot: UsageSnapshot.unavailable(message: message).withPaused(isPaused)
+                        )
+                    )
                 }
             }
         }
@@ -232,10 +232,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         }
 
         if sortedProviderSnapshots.isEmpty {
-            let message = messages.isEmpty ? "Usage data is unavailable" : messages.joined(separator: "\n")
             dashboard = UsageDashboardSnapshot(
                 providers: [],
-                fallback: UsageSnapshot.unavailable(message: message).withPaused(isPaused)
+                fallback: UsageSnapshot.unavailable(message: "Usage data is unavailable").withPaused(isPaused)
             )
         } else {
             dashboard = UsageDashboardSnapshot(
@@ -301,19 +300,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             return codexUsageHistoryStore
         case .claudeCode:
             return claudeUsageHistoryStore
-        }
-    }
-
-    private func shouldHideFailure(provider: UsageProvider, error: Error) -> Bool {
-        guard provider == .claudeCode, let cacheError = error as? ClaudeRateLimitCacheStoreError else {
-            return false
-        }
-
-        switch cacheError {
-        case .cacheMissing:
-            return true
-        case .missingWindow, .unreadableCache:
-            return false
         }
     }
 

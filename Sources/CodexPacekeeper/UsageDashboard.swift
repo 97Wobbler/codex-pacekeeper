@@ -99,7 +99,10 @@ struct UsageDashboardSnapshot: Equatable {
     }
 
     private var mostUrgentProvider: ProviderUsageSnapshot? {
-        providers.max { lhs, rhs in
+        let candidates = providers.filter { $0.snapshot.hasUsageData }
+        let rankedProviders = candidates.isEmpty ? providers : candidates
+
+        return rankedProviders.max { lhs, rhs in
             lhs.snapshot.paceRecommendation.status.urgencyRank < rhs.snapshot.paceRecommendation.status.urgencyRank
         }
     }
