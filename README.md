@@ -6,7 +6,7 @@ The product direction and MVP scope live in [docs/codex-pacekeeper-prd.md](docs/
 
 ## Current Status
 
-Current release target: `v0.2.0`.
+Current release target: `v0.2.1`.
 
 Functional SwiftUI app:
 
@@ -17,6 +17,7 @@ Functional SwiftUI app:
 - `~/.codex/auth.json` access token reading
 - ChatGPT WHAM usage API polling
 - optional Claude Code usage display from statusline `rate_limits`
+- opt-in experimental Claude direct usage fallback for stale/missing cache data
 - pace calculation model for actual usage, recommended pace, delta, and status
 - loading, stale, error, and paused states
 - Threshold/Redline notification logic for bundled app runs
@@ -29,7 +30,9 @@ Functional SwiftUI app:
 - macOS 13 or newer
 - Swift 5.10 or newer
 
-Full Xcode is recommended for app bundling and signing. The current repository can be built and tested with command line tools.
+Full Xcode is recommended for tests, app bundling, and signing. The app can be
+built with Command Line Tools, but `swift test` requires a working XCTest
+toolchain.
 
 ## Development
 
@@ -52,10 +55,9 @@ swift run CodexPacekeeper -- --demo-huds
 
 ## Claude Code Usage
 
-Claude usage is intentionally cache-backed. Pacekeeper does not read Claude
-OAuth tokens or call Anthropic's internal usage endpoint. Instead, Claude Code
-2.1.80 or newer can pass `rate_limits` to a custom statusline script, and the
-bridge script stores only usage percentages and reset times:
+Claude usage is cache-first. Claude Code 2.1.80 or newer can pass `rate_limits`
+to a custom statusline script, and the bridge script stores only usage
+percentages and reset times:
 
 ```sh
 scripts/claude-statusline-bridge.sh
@@ -69,7 +71,17 @@ cache is written to:
 ```
 
 Claude appears in the HUD when that cache exists. Old or post-reset cache data
-is shown as stale rather than refreshed by Pacekeeper.
+is shown as stale with dimmed indicators.
+
+By default, Pacekeeper does not read Claude OAuth credentials or call Anthropic's
+internal usage endpoint. The menu includes an opt-in `Statusline + Experimental
+Fallback` mode that can try a direct lookup when the statusline cache is stale or
+missing. Direct access must be explicitly authorized from the menu before
+automatic fallback polling starts. That fallback reads Claude Code OAuth
+credentials from the macOS Keychain, falling back to the legacy local credentials
+file, refreshes expired access tokens when possible, and calls an internal
+endpoint. It is off by default and may stop working without notice. Direct
+fallback results do not overwrite the statusline cache.
 
 ## MVP Direction
 

@@ -18,7 +18,9 @@ struct FlexibleDate: Decodable, Equatable {
             return
         }
 
-        if let isoDate = ISO8601DateFormatter().date(from: string) {
+        if let isoDate = Self.iso8601DateFormatter.date(from: string)
+            ?? Self.iso8601DateFormatterWithFractionalSeconds.date(from: string)
+        {
             date = isoDate
             return
         }
@@ -33,4 +35,12 @@ struct FlexibleDate: Decodable, Equatable {
 
         return Date(timeIntervalSince1970: timestamp)
     }
+
+    private static let iso8601DateFormatter = ISO8601DateFormatter()
+
+    private static let iso8601DateFormatterWithFractionalSeconds: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
 }

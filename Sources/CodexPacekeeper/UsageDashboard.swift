@@ -39,6 +39,31 @@ enum UsageProvider: String, CaseIterable, Hashable, Identifiable {
     }
 }
 
+enum ClaudeUsageSourceMode: String, CaseIterable, Hashable, Identifiable {
+    case statuslineOnly
+    case statuslineWithDirectFallback
+
+    static let defaultsKey = "claudeUsageSourceMode"
+    static let directAccessAuthorizedDefaultsKey = "claudeDirectAccessAuthorized"
+
+    var id: String {
+        rawValue
+    }
+
+    var title: String {
+        switch self {
+        case .statuslineOnly:
+            return "Statusline Only"
+        case .statuslineWithDirectFallback:
+            return "Statusline + Experimental Fallback"
+        }
+    }
+
+    var usesDirectFallback: Bool {
+        self == .statuslineWithDirectFallback
+    }
+}
+
 struct ProviderUsageSnapshot: Equatable, Identifiable {
     let provider: UsageProvider
     let snapshot: UsageSnapshot

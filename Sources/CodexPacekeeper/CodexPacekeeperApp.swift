@@ -14,6 +14,8 @@ struct CodexPacekeeperApp: App {
     @AppStorage(HUDDisplayMode.defaultsKey) private var hudDisplayModeRawValue = HUDDisplayMode.notchIsland.rawValue
     @AppStorage("hudCollapsed") private var hudCollapsed = false
     @AppStorage(UsageProvider.notchCompactDefaultsKey) private var notchCompactProviderRawValue = UsageProvider.codex.rawValue
+    @AppStorage(ClaudeUsageSourceMode.defaultsKey) private var claudeUsageSourceModeRawValue = ClaudeUsageSourceMode.statuslineOnly.rawValue
+    @AppStorage(ClaudeUsageSourceMode.directAccessAuthorizedDefaultsKey) private var claudeDirectAccessAuthorized = false
 
     var body: some Scene {
         appDelegate.setMenuBarState(menuBarState)
@@ -27,6 +29,27 @@ struct CodexPacekeeperApp: App {
                 ForEach(HUDDisplayMode.allCases) { displayMode in
                     Text(displayMode.title).tag(displayMode)
                 }
+            }
+
+            Picker("Claude Usage", selection: claudeUsageSourceModeBinding) {
+                ForEach(ClaudeUsageSourceMode.allCases) { sourceMode in
+                    Text(sourceMode.title).tag(sourceMode)
+                }
+            }
+
+            if claudeUsageSourceMode.usesDirectFallback {
+                Button(claudeDirectAccessAuthorized ? "Reauthorize Claude Direct Access..." : "Authorize Claude Direct Access...") {
+                    appDelegate.authorizeClaudeDirectAccess()
+                }
+
+                Button("Refresh Claude Direct") {
+                    appDelegate.refreshClaudeDirectUsage()
+                }
+                .disabled(!claudeDirectAccessAuthorized)
+            }
+
+            Button("Refresh Now") {
+                appDelegate.refreshUsage()
             }
 
             if hudDisplayMode == .floating {
@@ -66,6 +89,10 @@ struct CodexPacekeeperApp: App {
         UsageProvider(rawValue: notchCompactProviderRawValue) ?? .codex
     }
 
+    private var claudeUsageSourceMode: ClaudeUsageSourceMode {
+        ClaudeUsageSourceMode(rawValue: claudeUsageSourceModeRawValue) ?? .statuslineOnly
+    }
+
     private var hudVisibilityBinding: Binding<Bool> {
         Binding(
             get: { showsHUD },
@@ -102,6 +129,16 @@ struct CodexPacekeeperApp: App {
             set: { newValue in
                 notchCompactProviderRawValue = newValue.rawValue
                 appDelegate.setNotchCompactProvider(newValue)
+            }
+        )
+    }
+
+    private var claudeUsageSourceModeBinding: Binding<ClaudeUsageSourceMode> {
+        Binding(
+            get: { claudeUsageSourceMode },
+            set: { newValue in
+                claudeUsageSourceModeRawValue = newValue.rawValue
+                appDelegate.setClaudeUsageSourceMode(newValue)
             }
         )
     }

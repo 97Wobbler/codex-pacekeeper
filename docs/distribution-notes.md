@@ -1,5 +1,20 @@
 # Distribution Notes
 
+## v0.2.1 Release
+
+`v0.2.1` adds an opt-in experimental direct fallback for Claude usage when the
+statusline-backed cache is stale or missing.
+
+Included in this release:
+
+- Claude usage source menu with `Statusline Only` and `Statusline + Experimental Fallback`
+- direct fallback reads Claude Code OAuth credentials from Keychain or legacy credentials file
+- direct fallback requires explicit menu authorization before automatic polling
+- direct fallback refreshes expired Claude OAuth access tokens when possible
+- direct fallback throttled to avoid repeated calls to internal OAuth and usage endpoints
+- fallback keeps stale cache values visible when direct lookup is unavailable
+- package defaults bumped to version `0.2.1` build `3`
+
 ## v0.2.0 Release
 
 `v0.2.0` adds the notch island HUD and keeps the original floating HUD available

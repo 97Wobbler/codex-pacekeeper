@@ -34,14 +34,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
         return provider
     }()
+    @Published private(set) var claudeUsageSourceMode: ClaudeUsageSourceMode = {
+        guard
+            let rawValue = UserDefaults.standard.string(forKey: ClaudeUsageSourceMode.defaultsKey),
+            let sourceMode = ClaudeUsageSourceMode(rawValue: rawValue)
+        else {
+            return .statuslineOnly
+        }
+
+        return sourceMode
+    }()
+    @Published private(set) var claudeDirectAccessAuthorized: Bool = UserDefaults.standard.bool(
+        forKey: ClaudeUsageSourceMode.directAccessAuthorizedDefaultsKey
+    )
 
     private static let hudVisibilityDefaultsKey = "showsHUD"
     private static let hudCollapsedDefaultsKey = "hudCollapsed"
     private static let hudOriginXDefaultsKey = "hudOriginX"
     private static let hudOriginYDefaultsKey = "hudOriginY"
+    private static let claudeDirectFallbackMinimumInterval: TimeInterval = 5 * 60
     private let codexAuthTokenStore = CodexAuthTokenStore()
     private let codexUsageClient = WhamUsageClient()
     private let claudeRateLimitCacheStore = ClaudeRateLimitCacheStore()
+    private let claudeAuthTokenStore = ClaudeAuthTokenStore()
+    private let claudeOAuthRefreshClient = ClaudeOAuthRefreshClient()
+    private let claudeDirectUsageClient = ClaudeDirectUsageClient()
     private let codexUsageHistoryStore = UsageHistoryStore()
     private let claudeUsageHistoryStore = UsageHistoryStore(
         fileURL: UsageHistoryStore.defaultFileURL()
@@ -66,6 +83,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     private var hudFrameAnimationTimer: Timer?
     private var notchCollapseTimer: Timer?
     private var lastSuccessfulSnapshots: [UsageProvider: UsageSnapshot] = [:]
+    private var lastClaudeDirectFallbackAttemptAt: Date?
+    private var lastClaudeDirectFallbackSnapshot: UsageSnapshot?
+    private var cachedClaudeOAuthCredential: ClaudeOAuthCredential?
     private var deliveredNotificationKeys = Set<String>()
     private lazy var notificationCenter: UNUserNotificationCenter? = {
         guard Bundle.main.bundleURL.pathExtension == "app" else {
@@ -110,6 +130,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
         Task {
             await loadUsage()
+        }
+    }
+
+    func refreshClaudeDirectUsage() {
+        guard claudeUsageSourceMode.usesDirectFallback else {
+            NSLog("Codex Pacekeeper manual Claude direct refresh ignored: fallback mode disabled")
+            return
+        }
+
+        guard claudeDirectAccessAuthorized else {
+            NSLog("Codex Pacekeeper manual Claude direct refresh ignored: direct access not authorized")
+            applyProviderLoadResults(
+                [.failure(.claudeCode, ClaudeDirectFallbackError.notAuthorized)],
+                preservingExistingProviders: true
+            )
+            return
+        }
+
+        NSLog("Codex Pacekeeper manual Claude direct refresh requested")
+        Task {
+            await loadForcedClaudeDirectUsage()
+        }
+    }
+
+    func authorizeClaudeDirectAccess() {
+        guard claudeUsageSourceMode.usesDirectFallback else {
+            NSLog("Codex Pacekeeper Claude direct access authorization ignored: fallback mode disabled")
+            return
+        }
+
+        do {
+            let credential = try claudeAuthTokenStore.oauthCredential()
+            cachedClaudeOAuthCredential = credential
+            setClaudeDirectAccessAuthorized(true)
+            NSLog("Codex Pacekeeper Claude direct access authorized")
+            refreshClaudeDirectUsage()
+        } catch {
+            cachedClaudeOAuthCredential = nil
+            setClaudeDirectAccessAuthorized(false)
+            NSLog("Codex Pacekeeper Claude direct access authorization failed: \(friendlyMessage(for: error))")
+            applyProviderLoadResults(
+                [.failure(.claudeCode, error)],
+                preservingExistingProviders: true
+            )
         }
     }
 
@@ -182,6 +246,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         updateHUD(animated: hudDisplayMode == .notchIsland)
     }
 
+    func setClaudeUsageSourceMode(_ sourceMode: ClaudeUsageSourceMode) {
+        guard claudeUsageSourceMode != sourceMode else {
+            return
+        }
+
+        claudeUsageSourceMode = sourceMode
+        UserDefaults.standard.set(sourceMode.rawValue, forKey: ClaudeUsageSourceMode.defaultsKey)
+        lastClaudeDirectFallbackAttemptAt = nil
+        lastClaudeDirectFallbackSnapshot = nil
+        refreshUsage()
+    }
+
     func setMenuBarState(_ menuBarState: MenuBarState) {
         self.menuBarState = menuBarState
         if menuBarState.dashboard != dashboard {
@@ -196,6 +272,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         } else {
             hudPanel?.orderOut(nil)
         }
+    }
+
+    private func setClaudeDirectAccessAuthorized(_ isAuthorized: Bool) {
+        claudeDirectAccessAuthorized = isAuthorized
+        UserDefaults.standard.set(isAuthorized, forKey: ClaudeUsageSourceMode.directAccessAuthorizedDefaultsKey)
     }
 
     private func startPolling() {
@@ -215,9 +296,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
     private func loadUsage() async {
         async let codexResult = loadCodexUsage()
-        let claudeResult = loadClaudeUsage()
+        async let claudeResult = loadClaudeUsage()
         let results = await [codexResult, claudeResult]
-        var providerSnapshots: [ProviderUsageSnapshot] = []
+
+        applyProviderLoadResults(results, preservingExistingProviders: false)
+    }
+
+    private func loadForcedClaudeDirectUsage() async {
+        let fallbackSnapshot = try? claudeRateLimitCacheStore.snapshot()
+        lastClaudeDirectFallbackAttemptAt = nil
+
+        let result = await loadClaudeDirectFallback(fallbackSnapshot: fallbackSnapshot, forceAttempt: true)
+        switch result {
+        case .success(_, let snapshot):
+            NSLog(
+                "Codex Pacekeeper manual Claude direct refresh completed: state=\(snapshot.state.rawValue) primary=\(formattedPercent(snapshot.primary.actualPercent)) weekly=\(formattedPercent(snapshot.weekly.actualPercent))"
+            )
+        case .failure(_, let error):
+            NSLog("Codex Pacekeeper manual Claude direct refresh failed: \(friendlyMessage(for: error))")
+        }
+        applyProviderLoadResults([result], preservingExistingProviders: true)
+    }
+
+    private func formattedPercent(_ value: Double) -> String {
+        "\(Int(value.rounded()))%"
+    }
+
+    private func applyProviderLoadResults(
+        _ results: [ProviderLoadResult],
+        preservingExistingProviders: Bool
+    ) {
+        var providerSnapshotsByProvider = preservingExistingProviders
+            ? Dictionary(
+                uniqueKeysWithValues: dashboard.providers.map {
+                    ($0.provider, ProviderUsageSnapshot(provider: $0.provider, snapshot: $0.snapshot.withPaused(isPaused)))
+                }
+            )
+            : [:]
 
         for result in results {
             switch result {
@@ -227,29 +342,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
                 }
 
                 let pausedSnapshot = snapshot.withPaused(isPaused)
-                providerSnapshots.append(ProviderUsageSnapshot(provider: provider, snapshot: pausedSnapshot))
+                providerSnapshotsByProvider[provider] = ProviderUsageSnapshot(provider: provider, snapshot: pausedSnapshot)
                 deliverNotificationsIfNeeded(for: provider, snapshot: pausedSnapshot)
             case .failure(let provider, let error):
                 let message = friendlyMessage(for: error)
                 if let lastSuccessfulSnapshot = lastSuccessfulSnapshots[provider] {
-                    providerSnapshots.append(
-                        ProviderUsageSnapshot(
-                            provider: provider,
-                            snapshot: lastSuccessfulSnapshot.markingStale(message: message).withPaused(isPaused)
-                        )
+                    providerSnapshotsByProvider[provider] = ProviderUsageSnapshot(
+                        provider: provider,
+                        snapshot: lastSuccessfulSnapshot.markingStale(message: message).withPaused(isPaused)
                     )
                 } else {
-                    providerSnapshots.append(
-                        ProviderUsageSnapshot(
-                            provider: provider,
-                            snapshot: UsageSnapshot.unavailable(message: message).withPaused(isPaused)
-                        )
+                    providerSnapshotsByProvider[provider] = ProviderUsageSnapshot(
+                        provider: provider,
+                        snapshot: UsageSnapshot.unavailable(message: message).withPaused(isPaused)
                     )
                 }
             }
         }
 
-        let sortedProviderSnapshots = providerSnapshots.sorted {
+        let sortedProviderSnapshots = providerSnapshotsByProvider.values.sorted {
             $0.provider.sortIndex < $1.provider.sortIndex
         }
 
@@ -283,21 +394,189 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         }
     }
 
-    private func loadClaudeUsage() -> ProviderLoadResult {
+    private func loadClaudeUsage() async -> ProviderLoadResult {
         do {
             let snapshot = try claudeRateLimitCacheStore.snapshot()
 
             if snapshot.state == .fresh {
-                recordUsageSample(for: snapshot, provider: .claudeCode)
+                lastClaudeDirectFallbackSnapshot = nil
+                return claudeSuccess(snapshot)
             }
 
-            return .success(
-                .claudeCode,
-                snapshot.withTrend(usageTrend(now: snapshot.lastRefreshedAt, provider: .claudeCode))
-            )
+            guard claudeUsageSourceMode.usesDirectFallback, claudeDirectAccessAuthorized else {
+                return claudeSuccess(snapshot)
+            }
+
+            return await loadClaudeDirectFallback(fallbackSnapshot: snapshot)
         } catch {
+            guard claudeUsageSourceMode.usesDirectFallback, claudeDirectAccessAuthorized else {
+                return .failure(.claudeCode, error)
+            }
+
+            return await loadClaudeDirectFallback(fallbackSnapshot: nil)
+        }
+    }
+
+    private func loadClaudeDirectFallback(
+        fallbackSnapshot: UsageSnapshot?,
+        forceAttempt: Bool = false
+    ) async -> ProviderLoadResult {
+        let now = Date()
+
+        if !forceAttempt, let directSnapshot = reusableClaudeDirectFallbackSnapshot(now: now) {
+            return claudeSuccess(directSnapshot)
+        }
+
+        guard forceAttempt || shouldAttemptClaudeDirectFallback(now: now, fallbackSnapshot: fallbackSnapshot) else {
+            if let fallbackSnapshot {
+                return claudeSuccess(fallbackSnapshot)
+            }
+
+            return .failure(.claudeCode, ClaudeDirectFallbackError.waitingToRetry)
+        }
+
+        lastClaudeDirectFallbackAttemptAt = now
+
+        do {
+            let snapshot = try await loadClaudeDirectSnapshot(now: now)
+            lastClaudeDirectFallbackSnapshot = snapshot
+            return claudeSuccess(snapshot)
+        } catch {
+            NSLog("Codex Pacekeeper Claude direct fallback unavailable: \(friendlyMessage(for: error))")
+            let message = claudeDirectFallbackFailureMessage(for: error)
+
+            if !forceAttempt, let directSnapshot = reusableClaudeDirectFallbackSnapshot(now: now) {
+                return claudeSuccess(directSnapshot)
+            }
+
+            if let fallbackSnapshot {
+                return claudeSuccess(
+                    fallbackSnapshot.markingStale(
+                        message: message
+                    )
+                )
+            }
+
             return .failure(.claudeCode, error)
         }
+    }
+
+    private func loadClaudeDirectSnapshot(now: Date) async throws -> UsageSnapshot {
+        var credential = try cachedOrStoredClaudeOAuthCredential()
+
+        if credential.isExpired(at: now) {
+            credential = try await refreshClaudeOAuthCredential(credential, now: now)
+        }
+
+        do {
+            return try await claudeDirectUsageClient.fetchSnapshot(accessToken: credential.accessToken, now: now)
+        } catch ClaudeDirectUsageClientError.httpStatus(let status) where status == 401 || status == 403 {
+            credential = try await refreshClaudeOAuthCredential(credential, now: now)
+            return try await claudeDirectUsageClient.fetchSnapshot(accessToken: credential.accessToken, now: now)
+        }
+    }
+
+    private func cachedOrStoredClaudeOAuthCredential() throws -> ClaudeOAuthCredential {
+        if let credential = cachedClaudeOAuthCredential {
+            return credential
+        }
+
+        let credential = try claudeAuthTokenStore.oauthCredential()
+        cachedClaudeOAuthCredential = credential
+        return credential
+    }
+
+    private func refreshClaudeOAuthCredential(
+        _ credential: ClaudeOAuthCredential,
+        now: Date
+    ) async throws -> ClaudeOAuthCredential {
+        guard let refreshToken = credential.refreshToken, !refreshToken.isEmpty else {
+            throw ClaudeAuthTokenStoreError.refreshTokenMissing
+        }
+
+        let refreshResult = try await claudeOAuthRefreshClient.refreshToken(refreshToken, now: now)
+        let refreshedCredential = try claudeAuthTokenStore.saveRefreshResult(refreshResult, for: credential)
+        cachedClaudeOAuthCredential = refreshedCredential
+        return refreshedCredential
+    }
+
+    private func shouldAttemptClaudeDirectFallback(now: Date, fallbackSnapshot: UsageSnapshot?) -> Bool {
+        guard let lastClaudeDirectFallbackAttemptAt else {
+            return true
+        }
+
+        return now.timeIntervalSince(lastClaudeDirectFallbackAttemptAt) >= Self.claudeDirectFallbackMinimumInterval
+    }
+
+    private func reusableClaudeDirectFallbackSnapshot(now: Date) -> UsageSnapshot? {
+        guard let snapshot = lastClaudeDirectFallbackSnapshot else {
+            return nil
+        }
+
+        guard now.timeIntervalSince(snapshot.lastRefreshedAt) < Self.claudeDirectFallbackMinimumInterval else {
+            return nil
+        }
+
+        guard !isPastClaudeReset(now: now, snapshot: snapshot) else {
+            return nil
+        }
+
+        return snapshot
+    }
+
+    private func isPastClaudeReset(now: Date, snapshot: UsageSnapshot) -> Bool {
+        now.timeIntervalSince(snapshot.primary.resetAt) > ClaudeRateLimitCacheStore.resetTolerance
+            || now.timeIntervalSince(snapshot.weekly.resetAt) > ClaudeRateLimitCacheStore.resetTolerance
+    }
+
+    private func claudeSuccess(_ snapshot: UsageSnapshot) -> ProviderLoadResult {
+        if snapshot.state == .fresh {
+            recordUsageSample(for: snapshot, provider: .claudeCode)
+        }
+
+        return .success(
+            .claudeCode,
+            snapshot.withTrend(usageTrend(now: snapshot.lastRefreshedAt, provider: .claudeCode))
+        )
+    }
+
+    private func claudeDirectFallbackFailureMessage(for error: Error) -> String {
+        if let error = error as? ClaudeAuthTokenStoreError {
+            switch error {
+            case .credentialsMissing:
+                return "Claude Code cache is stale; direct fallback credentials not found"
+            case .unreadableCredentials:
+                return "Claude Code cache is stale; direct fallback credentials unreadable"
+            case .accessTokenMissing:
+                return "Claude Code cache is stale; direct fallback access token not found"
+            case .refreshTokenMissing:
+                return "Claude Code cache is stale; direct fallback refresh token not found"
+            case .credentialsNotWritable:
+                return "Claude Code cache is stale; direct fallback credentials not writable"
+            }
+        }
+
+        if let error = error as? ClaudeDirectUsageClientError {
+            switch error {
+            case .httpStatus(401), .httpStatus(403):
+                return "Claude Code cache is stale; direct fallback unauthorized"
+            default:
+                break
+            }
+        }
+
+        if let error = error as? ClaudeOAuthRefreshClientError {
+            switch error {
+            case .httpStatus(429):
+                return "Claude Code cache is stale; direct fallback refresh rate limited"
+            case .httpStatus(401), .httpStatus(403):
+                return "Claude Code cache is stale; direct fallback refresh unauthorized"
+            default:
+                break
+            }
+        }
+
+        return "Claude Code cache is stale; direct fallback unavailable"
     }
 
     private func usageTrend(now: Date, provider: UsageProvider) -> UsageTrend? {
@@ -1037,6 +1316,20 @@ private final class PaceHUDPanel: NSPanel {}
 private enum ProviderLoadResult {
     case success(UsageProvider, UsageSnapshot)
     case failure(UsageProvider, Error)
+}
+
+private enum ClaudeDirectFallbackError: Error, LocalizedError {
+    case waitingToRetry
+    case notAuthorized
+
+    var errorDescription: String? {
+        switch self {
+        case .waitingToRetry:
+            return "Claude direct usage fallback is waiting before retrying"
+        case .notAuthorized:
+            return "Claude direct usage fallback is not authorized"
+        }
+    }
 }
 
 @MainActor

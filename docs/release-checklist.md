@@ -1,13 +1,13 @@
 # Release Checklist
 
-## v0.2.0
+## v0.2.1
 
 Release type: unsigned MVP GitHub Release.
 
 Tag:
 
 ```text
-v0.2.0
+v0.2.1
 ```
 
 Release asset:
@@ -41,8 +41,8 @@ open dist/CodexPacekeeper.app
 
 1. Confirm the working tree only contains intended release changes.
 2. Commit the release prep changes.
-3. Create and push tag `v0.2.0`.
-4. Create a GitHub Release for `v0.2.0`.
+3. Create and push tag `v0.2.1`.
+4. Create a GitHub Release for `v0.2.1`.
 5. Upload `dist/CodexPacekeeper.app.zip` as the release asset.
 6. Verify that this URL downloads the asset:
 
