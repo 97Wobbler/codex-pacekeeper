@@ -240,12 +240,15 @@ private struct ProviderSummaryView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: itemSpacing) {
             if snapshot.hasUsageData {
-                ProviderRecommendationLine(
-                    provider: providerSnapshot.provider,
-                    recommendation: snapshot.paceRecommendation
-                )
-                PaceRow(reading: snapshot.primary, now: snapshot.lastRefreshedAt)
-                PaceRow(reading: snapshot.weekly, now: snapshot.lastRefreshedAt)
+                VStack(alignment: .leading, spacing: itemSpacing) {
+                    ProviderRecommendationLine(
+                        provider: providerSnapshot.provider,
+                        recommendation: snapshot.paceRecommendation
+                    )
+                    PaceRow(reading: snapshot.primary, now: snapshot.lastRefreshedAt)
+                    PaceRow(reading: snapshot.weekly, now: snapshot.lastRefreshedAt)
+                }
+                .opacity(snapshot.staleIndicatorOpacity)
             } else {
                 ProviderStatusOnlyView(provider: providerSnapshot.provider, snapshot: snapshot)
             }
@@ -323,6 +326,7 @@ private struct NotchCompactSummaryView: View {
         .padding(.horizontal, 24)
         .frame(maxWidth: .infinity)
         .frame(height: layout.topBandHeight)
+        .opacity(snapshot.staleIndicatorOpacity)
     }
 
     private var compactValue: String {
@@ -412,6 +416,7 @@ private struct FloatingCollapsedSummaryView: View {
             }
         }
         .frame(maxWidth: .infinity, minHeight: 20, alignment: .leading)
+        .opacity(snapshot.staleIndicatorOpacity)
     }
 
     private var iconColor: Color {
@@ -637,6 +642,12 @@ private extension PaceStatus {
         case .redline:
             return .red
         }
+    }
+}
+
+private extension UsageSnapshot {
+    var staleIndicatorOpacity: Double {
+        state == .stale ? 0.56 : 1
     }
 }
 
