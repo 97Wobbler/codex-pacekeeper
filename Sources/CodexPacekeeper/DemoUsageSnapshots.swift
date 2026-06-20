@@ -2,8 +2,8 @@ import CodexPacekeeperCore
 import Foundation
 
 enum DemoUsageSnapshots {
-    static func make(now: Date = Date()) -> [UsageSnapshot] {
-        [
+    static func make(now: Date = Date()) -> [UsageDashboardSnapshot] {
+        let snapshots = [
             snapshot(
                 now: now,
                 primary: reading(now: now, label: "5h", actual: 15, target: 68, resetAfter: 53 * 60),
@@ -30,6 +30,24 @@ enum DemoUsageSnapshots {
                 weekly: reading(now: now, label: "week", actual: 99, target: 57, resetAfter: 3 * 24 * 60 * 60)
             )
         ]
+
+        return [
+            dashboard(codex: snapshots[0]),
+            dashboard(codex: snapshots[1], claude: snapshots[2]),
+            dashboard(codex: snapshots[2], claude: snapshots[3]),
+            dashboard(codex: snapshots[3], claude: snapshots[1].markingStale(message: "Claude Code statusline cache is stale")),
+            dashboard(codex: snapshots[4])
+        ]
+    }
+
+    private static func dashboard(codex: UsageSnapshot, claude: UsageSnapshot? = nil) -> UsageDashboardSnapshot {
+        var providers = [ProviderUsageSnapshot(provider: .codex, snapshot: codex)]
+
+        if let claude {
+            providers.append(ProviderUsageSnapshot(provider: .claudeCode, snapshot: claude))
+        }
+
+        return UsageDashboardSnapshot(providers: providers, fallback: codex)
     }
 
     private static func snapshot(now: Date, primary: PaceReading, weekly: PaceReading) -> UsageSnapshot {

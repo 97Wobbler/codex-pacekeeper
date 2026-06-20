@@ -23,7 +23,18 @@ enum HUDDisplayMode: String, CaseIterable, Identifiable {
 
 enum FloatingHUDLayout {
     static let collapsedSize = CGSize(width: 220, height: 44)
-    static let expandedSize = CGSize(width: 280, height: 120)
+    static let expandedWidth: CGFloat = 280
+
+    static func expandedSize(providerCount: Int, staleCount: Int) -> CGSize {
+        let visibleProviders = max(providerCount, 1)
+        let extraProviders = max(visibleProviders - 1, 0)
+        let height = 120 + CGFloat(extraProviders * 104) + CGFloat(staleCount * 28)
+        return CGSize(width: expandedWidth, height: height)
+    }
+
+    static var expandedSize: CGSize {
+        expandedSize(providerCount: 1, staleCount: 0)
+    }
 }
 
 enum NotchHUDAnimation {
@@ -52,7 +63,14 @@ struct NotchHUDLayout: Equatable {
     }
 
     var expandedSize: CGSize {
-        CGSize(width: max(compactSize.width + 32, 328), height: max(topInset + 126, 154))
+        expandedSize(providerCount: 1, staleCount: 0)
+    }
+
+    func expandedSize(providerCount: Int, staleCount: Int) -> CGSize {
+        let visibleProviders = max(providerCount, 1)
+        let extraProviders = max(visibleProviders - 1, 0)
+        let extraHeight = CGFloat(extraProviders * 104 + staleCount * 28)
+        return CGSize(width: max(compactSize.width + 32, 328), height: max(topInset + 126 + extraHeight, 154 + extraHeight))
     }
 
     var topBandHeight: CGFloat {
@@ -61,7 +79,7 @@ struct NotchHUDLayout: Equatable {
 }
 
 struct HUDView: View {
-    let snapshot: UsageSnapshot
+    let dashboard: UsageDashboardSnapshot
     let displayMode: HUDDisplayMode
     let isNotchExpanded: Bool
     let notchLayout: NotchHUDLayout
@@ -89,10 +107,10 @@ struct HUDView: View {
                     )
 
                 if isNotchExpanded {
-                    NotchExpandedSummaryView(snapshot: snapshot, layout: notchLayout)
+                    NotchExpandedSummaryView(dashboard: dashboard, layout: notchLayout)
                         .transition(.opacity.combined(with: .move(edge: .top)))
                 } else {
-                    NotchCompactSummaryView(snapshot: snapshot, layout: notchLayout)
+                    NotchCompactSummaryView(dashboard: dashboard, layout: notchLayout)
                         .transition(.opacity)
                 }
             }
@@ -115,9 +133,9 @@ struct HUDView: View {
     private var floatingBody: some View {
         Group {
             if isFloatingCollapsed {
-                FloatingCollapsedSummaryView(snapshot: snapshot)
+                FloatingCollapsedSummaryView(dashboard: dashboard)
             } else {
-                PaceSummaryView(snapshot: snapshot)
+                PaceSummaryView(dashboard: dashboard)
             }
         }
             .padding(isFloatingCollapsed ? 8 : 12)
@@ -157,12 +175,40 @@ private struct NotchIslandShape: Shape {
 }
 
 struct PaceSummaryView: View {
-    let snapshot: UsageSnapshot
+    let dashboard: UsageDashboardSnapshot
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 11) {
+            if dashboard.hasUsageData {
+                ForEach(Array(dashboard.providers.enumerated()), id: \.element.id) { index, providerSnapshot in
+                    if index > 0 {
+                        Divider()
+                            .opacity(0.6)
+                    }
+
+                    ProviderSummaryView(providerSnapshot: providerSnapshot)
+                }
+            } else {
+                StatusOnlyView(snapshot: dashboard.fallback)
+            }
+        }
+    }
+}
+
+private struct ProviderSummaryView: View {
+    let providerSnapshot: ProviderUsageSnapshot
+
+    private var snapshot: UsageSnapshot {
+        providerSnapshot.snapshot
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             if snapshot.hasUsageData {
-                RecommendationLine(recommendation: snapshot.paceRecommendation)
+                ProviderRecommendationLine(
+                    provider: providerSnapshot.provider,
+                    recommendation: snapshot.paceRecommendation
+                )
                 PaceRow(reading: snapshot.primary, now: snapshot.lastRefreshedAt)
                 PaceRow(reading: snapshot.weekly, now: snapshot.lastRefreshedAt)
             } else {
@@ -170,24 +216,32 @@ struct PaceSummaryView: View {
             }
 
             if snapshot.state != .fresh {
-                HStack(spacing: 6) {
-                    Circle()
-                        .fill(stateColor)
-                        .frame(width: 6, height: 6)
-                    Text(snapshot.stateLabel)
-                    Text(snapshot.lastRefreshedAt, style: .time)
-                }
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-
-                if let message = snapshot.message {
-                    Text(message)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                }
+                StaleStatusView(snapshot: snapshot)
             }
         }
+    }
+}
+
+private struct StaleStatusView: View {
+    let snapshot: UsageSnapshot
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(stateColor)
+                    .frame(width: 6, height: 6)
+                Text(snapshot.stateLabel)
+                Text(snapshot.lastRefreshedAt, style: .time)
+            }
+
+            if let message = snapshot.message {
+                Text(message)
+                    .lineLimit(2)
+            }
+        }
+        .font(.caption2)
+        .foregroundStyle(.secondary)
     }
 
     private var stateColor: Color {
@@ -205,8 +259,12 @@ struct PaceSummaryView: View {
 }
 
 private struct NotchCompactSummaryView: View {
-    let snapshot: UsageSnapshot
+    let dashboard: UsageDashboardSnapshot
     let layout: NotchHUDLayout
+
+    private var snapshot: UsageSnapshot {
+        dashboard.primarySnapshot
+    }
 
     var body: some View {
         HStack(spacing: 10) {
@@ -216,6 +274,13 @@ private struct NotchCompactSummaryView: View {
                 .frame(width: 24, alignment: .leading)
 
             Spacer(minLength: 0)
+
+            if let providerCode {
+                Text(providerCode)
+                    .font(.system(size: 10, weight: .bold, design: .rounded))
+                    .foregroundStyle(.secondary)
+                    .monospaced()
+            }
 
             Text(compactValue)
                 .font(.system(size: 13, weight: .bold, design: .rounded))
@@ -247,17 +312,25 @@ private struct NotchCompactSummaryView: View {
             return .red
         }
     }
+
+    private var providerCode: String? {
+        guard dashboard.providers.count > 1 else {
+            return nil
+        }
+
+        return dashboard.primaryProviderSnapshot?.provider.menuBarCode
+    }
 }
 
 private struct NotchExpandedSummaryView: View {
-    let snapshot: UsageSnapshot
+    let dashboard: UsageDashboardSnapshot
     let layout: NotchHUDLayout
 
     var body: some View {
         VStack(spacing: 8) {
-            NotchCompactSummaryView(snapshot: snapshot, layout: layout)
+            NotchCompactSummaryView(dashboard: dashboard, layout: layout)
 
-            PaceSummaryView(snapshot: snapshot)
+            PaceSummaryView(dashboard: dashboard)
                 .padding(.horizontal, 14)
                 .padding(.bottom, 12)
         }
@@ -265,7 +338,11 @@ private struct NotchExpandedSummaryView: View {
 }
 
 private struct FloatingCollapsedSummaryView: View {
-    let snapshot: UsageSnapshot
+    let dashboard: UsageDashboardSnapshot
+
+    private var snapshot: UsageSnapshot {
+        dashboard.primarySnapshot
+    }
 
     var body: some View {
         HStack(spacing: 8) {
@@ -275,6 +352,13 @@ private struct FloatingCollapsedSummaryView: View {
                 .frame(width: 16)
 
             if snapshot.hasUsageData {
+                if let providerCode {
+                    Text(providerCode)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .monospaced()
+                }
+
                 Text(snapshot.primary.label.uppercased())
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(.secondary)
@@ -312,6 +396,14 @@ private struct FloatingCollapsedSummaryView: View {
             return .red
         }
     }
+
+    private var providerCode: String? {
+        guard dashboard.providers.count > 1 else {
+            return nil
+        }
+
+        return dashboard.primaryProviderSnapshot?.provider.menuBarCode
+    }
 }
 
 private struct StatusOnlyView: View {
@@ -341,11 +433,18 @@ private struct StatusOnlyView: View {
     }
 }
 
-private struct RecommendationLine: View {
+private struct ProviderRecommendationLine: View {
+    let provider: UsageProvider
     let recommendation: PaceRecommendation
 
     var body: some View {
         HStack(spacing: 8) {
+            Text(provider.displayName.uppercased())
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .frame(width: 52, alignment: .leading)
+
             Image(systemName: recommendation.direction.systemImageName)
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.primary)

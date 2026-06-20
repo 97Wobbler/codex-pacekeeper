@@ -16,6 +16,7 @@ Functional SwiftUI app:
 - drag docking between notch island and floating HUD modes
 - `~/.codex/auth.json` access token reading
 - ChatGPT WHAM usage API polling
+- optional Claude Code usage display from statusline `rate_limits`
 - pace calculation model for actual usage, recommended pace, delta, and status
 - loading, stale, error, and paused states
 - Threshold/Redline notification logic for bundled app runs
@@ -48,6 +49,27 @@ Run fixed visual QA scenarios without auth/API polling:
 ```sh
 swift run CodexPacekeeper -- --demo-huds
 ```
+
+## Claude Code Usage
+
+Claude usage is intentionally cache-backed. Pacekeeper does not read Claude
+OAuth tokens or call Anthropic's internal usage endpoint. Instead, Claude Code
+2.1.80 or newer can pass `rate_limits` to a custom statusline script, and the
+bridge script stores only usage percentages and reset times:
+
+```sh
+scripts/claude-statusline-bridge.sh
+```
+
+The active Claude statusline should pipe its stdin JSON to that script. The
+cache is written to:
+
+```text
+~/Library/Application Support/Codex Pacekeeper/claude-rate-limits.json
+```
+
+Claude appears in the HUD when that cache exists. Old or post-reset cache data
+is shown as stale rather than refreshed by Pacekeeper.
 
 ## MVP Direction
 

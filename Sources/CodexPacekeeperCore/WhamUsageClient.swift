@@ -110,38 +110,3 @@ private struct WhamUsageWindow: Decodable {
         )
     }
 }
-
-private struct FlexibleDate: Decodable {
-    let date: Date
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.singleValueContainer()
-
-        if let timestamp = try? container.decode(Double.self) {
-            if timestamp > 1_000_000_000_000 {
-                date = Date(timeIntervalSince1970: timestamp / 1_000)
-            } else {
-                date = Date(timeIntervalSince1970: timestamp)
-            }
-            return
-        }
-
-        let string = try container.decode(String.self)
-
-        if let timestamp = Double(string) {
-            if timestamp > 1_000_000_000_000 {
-                date = Date(timeIntervalSince1970: timestamp / 1_000)
-            } else {
-                date = Date(timeIntervalSince1970: timestamp)
-            }
-            return
-        }
-
-        if let isoDate = ISO8601DateFormatter().date(from: string) {
-            date = isoDate
-            return
-        }
-
-        throw DecodingError.dataCorruptedError(in: container, debugDescription: "Unsupported date format")
-    }
-}

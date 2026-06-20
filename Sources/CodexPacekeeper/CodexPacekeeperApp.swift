@@ -3,7 +3,7 @@ import SwiftUI
 
 @MainActor
 final class MenuBarState: ObservableObject {
-    @Published var snapshot = UsageSnapshot.placeholder
+    @Published var dashboard = UsageDashboardSnapshot.placeholder
 }
 
 @main
@@ -44,11 +44,11 @@ struct CodexPacekeeperApp: App {
     }
 
     private var menuBarTitle: String {
-        menuBarState.snapshot.menuBarTitle
+        menuBarState.dashboard.menuBarTitle
     }
 
     private var menuBarIcon: String {
-        menuBarState.snapshot.stateSystemImageName
+        menuBarState.dashboard.stateSystemImageName
     }
 
     private var hudDisplayMode: HUDDisplayMode {

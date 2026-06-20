@@ -5,7 +5,7 @@ import UserNotifications
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
-    @Published private(set) var snapshot = UsageSnapshot.placeholder
+    @Published private(set) var dashboard = UsageDashboardSnapshot.placeholder
     @Published private(set) var isHUDVisible: Bool = {
         if UserDefaults.standard.object(forKey: hudVisibilityDefaultsKey) == nil {
             return true
@@ -29,9 +29,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     private static let hudCollapsedDefaultsKey = "hudCollapsed"
     private static let hudOriginXDefaultsKey = "hudOriginX"
     private static let hudOriginYDefaultsKey = "hudOriginY"
-    private let authTokenStore = CodexAuthTokenStore()
-    private let usageClient = WhamUsageClient()
-    private let usageHistoryStore = UsageHistoryStore()
+    private let codexAuthTokenStore = CodexAuthTokenStore()
+    private let codexUsageClient = WhamUsageClient()
+    private let claudeRateLimitCacheStore = ClaudeRateLimitCacheStore()
+    private let codexUsageHistoryStore = UsageHistoryStore()
+    private let claudeUsageHistoryStore = UsageHistoryStore(
+        fileURL: UsageHistoryStore.defaultFileURL()
+            .deletingLastPathComponent()
+            .appendingPathComponent("claude-usage-samples.json", isDirectory: false)
+    )
 
     private var hudPanel: NSPanel?
     private var hudHostingView: HUDHostingView?
@@ -48,7 +54,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     private var isNotchDetachReady = false
     private var hudFrameAnimationTimer: Timer?
     private var notchCollapseTimer: Timer?
-    private var lastSuccessfulSnapshot: UsageSnapshot?
+    private var lastSuccessfulSnapshots: [UsageProvider: UsageSnapshot] = [:]
     private var deliveredNotificationKeys = Set<String>()
     private lazy var notificationCenter: UNUserNotificationCenter? = {
         guard Bundle.main.bundleURL.pathExtension == "app" else {
@@ -86,8 +92,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     }
 
     func refreshUsage() {
-        if lastSuccessfulSnapshot == nil {
-            snapshot = .placeholder.withPaused(isPaused)
+        if lastSuccessfulSnapshots.isEmpty {
+            dashboard = UsageDashboardSnapshot.placeholder.withPaused(isPaused)
             updateHUD()
         }
 
@@ -98,7 +104,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
     func setPaused(_ isPaused: Bool) {
         self.isPaused = isPaused
-        snapshot = snapshot.withPaused(isPaused)
+        dashboard = dashboard.withPaused(isPaused)
 
         if isPaused {
             timer?.invalidate()
@@ -156,8 +162,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
     func setMenuBarState(_ menuBarState: MenuBarState) {
         self.menuBarState = menuBarState
-        if menuBarState.snapshot != snapshot {
-            menuBarState.snapshot = snapshot
+        if menuBarState.dashboard != dashboard {
+            menuBarState.dashboard = dashboard
         }
     }
 
@@ -186,42 +192,128 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     }
 
     private func loadUsage() async {
-        do {
-            let token = try authTokenStore.accessToken()
-            let freshSnapshot = try await usageClient.fetchSnapshot(accessToken: token)
-            recordUsageSample(for: freshSnapshot)
-            let trendedSnapshot = freshSnapshot.withTrend(usageTrend(now: freshSnapshot.lastRefreshedAt))
-            lastSuccessfulSnapshot = trendedSnapshot
-            snapshot = trendedSnapshot.withPaused(isPaused)
-            updateHUD()
-            deliverNotificationsIfNeeded(for: snapshot)
-        } catch {
-            let message = friendlyMessage(for: error)
+        async let codexResult = loadCodexUsage()
+        let claudeResult = loadClaudeUsage()
+        let results = await [codexResult, claudeResult]
+        var providerSnapshots: [ProviderUsageSnapshot] = []
+        var messages: [String] = []
 
-            if let lastSuccessfulSnapshot {
-                snapshot = lastSuccessfulSnapshot.markingStale(message: message).withPaused(isPaused)
-            } else {
-                snapshot = UsageSnapshot.unavailable(message: message).withPaused(isPaused)
+        for result in results {
+            switch result {
+            case .success(let provider, let snapshot):
+                if snapshot.hasUsageData {
+                    lastSuccessfulSnapshots[provider] = snapshot
+                }
+
+                let pausedSnapshot = snapshot.withPaused(isPaused)
+                providerSnapshots.append(ProviderUsageSnapshot(provider: provider, snapshot: pausedSnapshot))
+                deliverNotificationsIfNeeded(for: provider, snapshot: pausedSnapshot)
+            case .failure(let provider, let error):
+                if shouldHideFailure(provider: provider, error: error) {
+                    continue
+                }
+
+                let message = friendlyMessage(for: error)
+                if let lastSuccessfulSnapshot = lastSuccessfulSnapshots[provider] {
+                    providerSnapshots.append(
+                        ProviderUsageSnapshot(
+                            provider: provider,
+                            snapshot: lastSuccessfulSnapshot.markingStale(message: message).withPaused(isPaused)
+                        )
+                    )
+                } else {
+                    messages.append("\(provider.displayName): \(message)")
+                }
             }
+        }
 
-            updateHUD()
+        let sortedProviderSnapshots = providerSnapshots.sorted {
+            $0.provider.sortIndex < $1.provider.sortIndex
+        }
+
+        if sortedProviderSnapshots.isEmpty {
+            let message = messages.isEmpty ? "Usage data is unavailable" : messages.joined(separator: "\n")
+            dashboard = UsageDashboardSnapshot(
+                providers: [],
+                fallback: UsageSnapshot.unavailable(message: message).withPaused(isPaused)
+            )
+        } else {
+            dashboard = UsageDashboardSnapshot(
+                providers: sortedProviderSnapshots,
+                fallback: sortedProviderSnapshots[0].snapshot
+            )
+        }
+
+        updateHUD()
+    }
+
+    private func loadCodexUsage() async -> ProviderLoadResult {
+        do {
+            let token = try codexAuthTokenStore.accessToken()
+            let freshSnapshot = try await codexUsageClient.fetchSnapshot(accessToken: token)
+            recordUsageSample(for: freshSnapshot, provider: .codex)
+            return .success(
+                .codex,
+                freshSnapshot.withTrend(usageTrend(now: freshSnapshot.lastRefreshedAt, provider: .codex))
+            )
+        } catch {
+            return .failure(.codex, error)
         }
     }
 
-    private func usageTrend(now: Date) -> UsageTrend? {
+    private func loadClaudeUsage() -> ProviderLoadResult {
         do {
-            return try usageHistoryStore.recentTrend(now: now)
+            let snapshot = try claudeRateLimitCacheStore.snapshot()
+
+            if snapshot.state == .fresh {
+                recordUsageSample(for: snapshot, provider: .claudeCode)
+            }
+
+            return .success(
+                .claudeCode,
+                snapshot.withTrend(usageTrend(now: snapshot.lastRefreshedAt, provider: .claudeCode))
+            )
         } catch {
-            NSLog("Codex Pacekeeper failed to load usage trend: \(error.localizedDescription)")
+            return .failure(.claudeCode, error)
+        }
+    }
+
+    private func usageTrend(now: Date, provider: UsageProvider) -> UsageTrend? {
+        do {
+            return try usageHistoryStore(for: provider).recentTrend(now: now)
+        } catch {
+            NSLog("Codex Pacekeeper failed to load \(provider.displayName) usage trend: \(error.localizedDescription)")
             return nil
         }
     }
 
-    private func recordUsageSample(for snapshot: UsageSnapshot) {
+    private func recordUsageSample(for snapshot: UsageSnapshot, provider: UsageProvider) {
         do {
-            try usageHistoryStore.record(UsageSample(snapshot: snapshot))
+            try usageHistoryStore(for: provider).record(UsageSample(snapshot: snapshot))
         } catch {
-            NSLog("Codex Pacekeeper failed to record usage sample: \(error.localizedDescription)")
+            NSLog("Codex Pacekeeper failed to record \(provider.displayName) usage sample: \(error.localizedDescription)")
+        }
+    }
+
+    private func usageHistoryStore(for provider: UsageProvider) -> UsageHistoryStore {
+        switch provider {
+        case .codex:
+            return codexUsageHistoryStore
+        case .claudeCode:
+            return claudeUsageHistoryStore
+        }
+    }
+
+    private func shouldHideFailure(provider: UsageProvider, error: Error) -> Bool {
+        guard provider == .claudeCode, let cacheError = error as? ClaudeRateLimitCacheStoreError else {
+            return false
+        }
+
+        switch cacheError {
+        case .cacheMissing:
+            return true
+        case .missingWindow, .unreadableCache:
+            return false
         }
     }
 
@@ -258,16 +350,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     }
 
     private func createDemoHUDs() {
-        let snapshots = DemoUsageSnapshots.make()
+        let dashboards = DemoUsageSnapshots.make()
         let layout = fallbackHUDLayout()
-        let panelSize = demoHUDSize(layout: layout)
         let visibleFrame = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 900, height: 800)
         let startX = visibleFrame.minX + 80
-        var y = visibleFrame.maxY - panelSize.height - 60
+        var y = visibleFrame.maxY - 60
 
-        demoPanels = snapshots.map { snapshot in
+        demoPanels = dashboards.map { dashboard in
+            let panelSize = demoHUDSize(layout: layout, dashboard: dashboard)
+            y -= panelSize.height
             let hostingView = HUDHostingView(rootView: HUDView(
-                snapshot: snapshot,
+                dashboard: dashboard,
                 displayMode: hudDisplayMode,
                 isNotchExpanded: true,
                 notchLayout: layout,
@@ -281,7 +374,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
                 hostingView: hostingView
             )
             panel.orderFrontRegardless()
-            y -= panelSize.height + 14
+            y -= 14
             return panel
         }
     }
@@ -337,12 +430,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         panel.alphaValue = 1
     }
 
-    private func demoHUDSize(layout: NotchHUDLayout) -> NSSize {
+    private func demoHUDSize(layout: NotchHUDLayout, dashboard: UsageDashboardSnapshot) -> NSSize {
         switch hudDisplayMode {
         case .notchIsland:
-            return layout.expandedSize
+            return layout.expandedSize(
+                providerCount: dashboard.providers.count,
+                staleCount: dashboard.staleProviderCount
+            )
         case .floating:
-            return FloatingHUDLayout.expandedSize
+            return FloatingHUDLayout.expandedSize(
+                providerCount: dashboard.providers.count,
+                staleCount: dashboard.staleProviderCount
+            )
         }
     }
 
@@ -470,16 +569,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         } else {
             hudHostingView?.rootView = makeHUDView()
         }
-        menuBarState?.snapshot = snapshot
+        menuBarState?.dashboard = dashboard
     }
 
     private var currentHUDSize: NSSize {
         switch hudDisplayMode {
         case .notchIsland:
             let layout = currentHUDLayout()
-            return isNotchPanelExpanded ? layout.expandedSize : layout.compactSize
+            return isNotchPanelExpanded
+                ? layout.expandedSize(providerCount: dashboard.providers.count, staleCount: dashboard.staleProviderCount)
+                : layout.compactSize
         case .floating:
-            return isHUDCollapsed ? FloatingHUDLayout.collapsedSize : FloatingHUDLayout.expandedSize
+            return isHUDCollapsed
+                ? FloatingHUDLayout.collapsedSize
+                : FloatingHUDLayout.expandedSize(providerCount: dashboard.providers.count, staleCount: dashboard.staleProviderCount)
         }
     }
 
@@ -555,7 +658,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
     private func makeHUDView() -> HUDView {
         HUDView(
-            snapshot: snapshot,
+            dashboard: dashboard,
             displayMode: hudDisplayMode,
             isNotchExpanded: isHUDExpanded,
             notchLayout: currentHUDLayout(),
@@ -708,7 +811,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             return
         }
 
-        let size = FloatingHUDLayout.expandedSize
+        let size = FloatingHUDLayout.expandedSize(
+            providerCount: dashboard.providers.count,
+            staleCount: dashboard.staleProviderCount
+        )
         let targetFrame = constrainedHUDFrame(
             NSRect(
                 x: screenPoint.x - size.width / 2,
@@ -746,7 +852,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         )
         let topCenter = NSPoint(x: frame.midX, y: frame.maxY)
         let targetCenterX = notchCenterX(for: screen) ?? screen.frame.midX
-        let horizontalTolerance = max(layout.expandedSize.width / 2 + 48, 240)
+        let expandedSize = layout.expandedSize(providerCount: dashboard.providers.count, staleCount: dashboard.staleProviderCount)
+        let horizontalTolerance = max(expandedSize.width / 2 + 48, 240)
         let verticalDistanceFromTop = abs(screen.frame.maxY - topCenter.y)
 
         return abs(topCenter.x - targetCenterX) <= horizontalTolerance
@@ -781,7 +888,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
         if isExpanded {
             isNotchPanelExpanded = true
-            resizeHUDPanel(to: layout.expandedSize, animated: false, reposition: true)
+            resizeHUDPanel(
+                to: layout.expandedSize(providerCount: dashboard.providers.count, staleCount: dashboard.staleProviderCount),
+                animated: false,
+                reposition: true
+            )
             self.isHUDExpanded = true
             updateHUD(animated: true)
         } else {
@@ -814,21 +925,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         notificationCenter?.requestAuthorization(options: [.alert, .sound]) { _, _ in }
     }
 
-    private func deliverNotificationsIfNeeded(for snapshot: UsageSnapshot) {
+    private func deliverNotificationsIfNeeded(for provider: UsageProvider, snapshot: UsageSnapshot) {
         guard snapshot.state == .fresh, !snapshot.primary.isPaused else {
             return
         }
 
-        deliverNotificationIfNeeded(for: snapshot.primary)
-        deliverNotificationIfNeeded(for: snapshot.weekly)
+        deliverNotificationIfNeeded(for: snapshot.primary, provider: provider)
+        deliverNotificationIfNeeded(for: snapshot.weekly, provider: provider)
     }
 
-    private func deliverNotificationIfNeeded(for reading: PaceReading) {
+    private func deliverNotificationIfNeeded(for reading: PaceReading, provider: UsageProvider) {
         guard reading.status == .threshold || reading.status == .redline else {
             return
         }
 
-        let key = "\(reading.label)-\(reading.status.rawValue)-\(Int(reading.resetAt.timeIntervalSince1970))"
+        let key = "\(provider.rawValue)-\(reading.label)-\(reading.status.rawValue)-\(Int(reading.resetAt.timeIntervalSince1970))"
         guard !deliveredNotificationKeys.contains(key) else {
             return
         }
@@ -836,7 +947,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         deliveredNotificationKeys.insert(key)
 
         let content = UNMutableNotificationContent()
-        content.title = reading.status == .redline ? "Redline pace" : "Ease up to stay on pace"
+        content.title = reading.status == .redline ? "\(provider.displayName) redline pace" : "\(provider.displayName) pace warning"
         content.body = "\(reading.label) \(reading.deltaPercentagePoints.signedRoundedPercentPoints) · \(reading.guidance)"
         content.sound = reading.status == .redline ? .default : nil
 
@@ -860,6 +971,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 }
 
 private final class PaceHUDPanel: NSPanel {}
+
+private enum ProviderLoadResult {
+    case success(UsageProvider, UsageSnapshot)
+    case failure(UsageProvider, Error)
+}
 
 @MainActor
 private final class HUDHostingView: NSHostingView<HUDView> {
