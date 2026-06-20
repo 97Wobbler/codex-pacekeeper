@@ -127,7 +127,9 @@ struct HUDView: View {
     }
 
     private var notchVisibleSize: CGSize {
-        isNotchExpanded ? notchLayout.expandedSize : notchLayout.compactSize
+        isNotchExpanded
+            ? notchLayout.expandedSize(providerCount: dashboard.providers.count, staleCount: dashboard.staleProviderCount)
+            : notchLayout.compactSize
     }
 
     private var floatingBody: some View {
