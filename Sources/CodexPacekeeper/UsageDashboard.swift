@@ -5,6 +5,8 @@ enum UsageProvider: String, CaseIterable, Hashable, Identifiable {
     case codex
     case claudeCode
 
+    static let notchCompactDefaultsKey = "notchCompactProvider"
+
     var id: String {
         rawValue
     }
@@ -76,6 +78,10 @@ struct UsageDashboardSnapshot: Equatable {
 
     var primaryProviderSnapshot: ProviderUsageSnapshot? {
         mostUrgentProvider
+    }
+
+    func providerSnapshot(for provider: UsageProvider) -> ProviderUsageSnapshot? {
+        providers.first { $0.provider == provider }
     }
 
     var staleProviderCount: Int {

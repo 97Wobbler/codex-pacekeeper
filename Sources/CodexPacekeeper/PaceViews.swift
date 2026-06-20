@@ -94,6 +94,7 @@ struct HUDView: View {
     let displayMode: HUDDisplayMode
     let isNotchExpanded: Bool
     let notchLayout: NotchHUDLayout
+    let notchCompactProvider: UsageProvider
     let notchDragOffset: CGFloat
     let isNotchDetachReady: Bool
     let isFloatingCollapsed: Bool
@@ -118,10 +119,18 @@ struct HUDView: View {
                     )
 
                 if isNotchExpanded {
-                    NotchExpandedSummaryView(dashboard: dashboard, layout: notchLayout)
+                    NotchExpandedSummaryView(
+                        dashboard: dashboard,
+                        layout: notchLayout,
+                        compactProvider: notchCompactProvider
+                    )
                         .transition(.opacity.combined(with: .move(edge: .top)))
                 } else {
-                    NotchCompactSummaryView(dashboard: dashboard, layout: notchLayout)
+                    NotchCompactSummaryView(
+                        dashboard: dashboard,
+                        layout: notchLayout,
+                        provider: notchCompactProvider
+                    )
                         .transition(.opacity)
                 }
             }
@@ -287,31 +296,29 @@ private struct StaleStatusView: View {
 private struct NotchCompactSummaryView: View {
     let dashboard: UsageDashboardSnapshot
     let layout: NotchHUDLayout
+    let provider: UsageProvider
 
     private var snapshot: UsageSnapshot {
-        dashboard.primarySnapshot
+        dashboard.providerSnapshot(for: provider)?.snapshot ?? .placeholder
     }
 
     var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: snapshot.stateSystemImageName)
-                .font(.system(size: 13, weight: .bold))
-                .foregroundStyle(iconColor)
-                .frame(width: 24, alignment: .leading)
-
-            Spacer(minLength: 0)
-
-            if let providerCode {
-                Text(providerCode)
-                    .font(.system(size: 10, weight: .bold, design: .rounded))
-                    .foregroundStyle(.secondary)
-                    .monospaced()
+        HStack(spacing: 0) {
+            HStack {
+                Image(systemName: snapshot.stateSystemImageName)
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(iconColor)
+                    .frame(width: 24, alignment: .leading)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
 
-            Text(compactValue)
-                .font(.system(size: 13, weight: .bold, design: .rounded))
-                .foregroundStyle(valueColor)
-                .monospacedDigit()
+            HStack {
+                Text(compactValue)
+                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                    .foregroundStyle(valueColor)
+                    .monospacedDigit()
+            }
+            .frame(maxWidth: .infinity, alignment: .trailing)
         }
         .padding(.horizontal, 24)
         .frame(maxWidth: .infinity)
@@ -338,23 +345,16 @@ private struct NotchCompactSummaryView: View {
             return .red
         }
     }
-
-    private var providerCode: String? {
-        guard dashboard.providers.count > 1 else {
-            return nil
-        }
-
-        return dashboard.primaryProviderSnapshot?.provider.menuBarCode
-    }
 }
 
 private struct NotchExpandedSummaryView: View {
     let dashboard: UsageDashboardSnapshot
     let layout: NotchHUDLayout
+    let compactProvider: UsageProvider
 
     var body: some View {
         VStack(spacing: 8) {
-            NotchCompactSummaryView(dashboard: dashboard, layout: layout)
+            NotchCompactSummaryView(dashboard: dashboard, layout: layout, provider: compactProvider)
 
             PaceSummaryView(
                 dashboard: dashboard,

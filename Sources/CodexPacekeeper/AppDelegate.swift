@@ -24,6 +24,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
         return displayMode
     }()
+    @Published private(set) var notchCompactProvider: UsageProvider = {
+        guard
+            let rawValue = UserDefaults.standard.string(forKey: UsageProvider.notchCompactDefaultsKey),
+            let provider = UsageProvider(rawValue: rawValue)
+        else {
+            return .codex
+        }
+
+        return provider
+    }()
 
     private static let hudVisibilityDefaultsKey = "showsHUD"
     private static let hudCollapsedDefaultsKey = "hudCollapsed"
@@ -158,6 +168,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
         updateHUD()
         resizeHUDPanel(to: currentHUDSize, animated: true)
+    }
+
+    func setNotchCompactProvider(_ provider: UsageProvider) {
+        guard notchCompactProvider != provider else {
+            return
+        }
+
+        notchCompactProvider = provider
+        UserDefaults.standard.set(provider.rawValue, forKey: UsageProvider.notchCompactDefaultsKey)
+        updateHUD(animated: hudDisplayMode == .notchIsland)
     }
 
     func setMenuBarState(_ menuBarState: MenuBarState) {
@@ -350,6 +370,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
                 displayMode: hudDisplayMode,
                 isNotchExpanded: true,
                 notchLayout: layout,
+                notchCompactProvider: notchCompactProvider,
                 notchDragOffset: 0,
                 isNotchDetachReady: false,
                 isFloatingCollapsed: false
@@ -648,6 +669,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             displayMode: hudDisplayMode,
             isNotchExpanded: isHUDExpanded,
             notchLayout: currentHUDLayout(),
+            notchCompactProvider: notchCompactProvider,
             notchDragOffset: notchDragOffset,
             isNotchDetachReady: isNotchDetachReady,
             isFloatingCollapsed: isHUDCollapsed
