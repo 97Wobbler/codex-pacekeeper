@@ -49,6 +49,12 @@ enum HUDDockingInteraction {
 struct NotchHUDLayout: Equatable {
     private static let fallbackNotchWidth: CGFloat = 184
     private static let fallbackTopInset: CGFloat = 32
+    private static let maxExpandedTopInset: CGFloat = 36
+    private static let expandedContentHeight: CGFloat = 126
+    private static let expandedMinimumHeight: CGFloat = 154
+    private static let extraProviderHeight: CGFloat = 112
+    private static let staleStatusHeight: CGFloat = 28
+    private static let multiProviderBottomAllowance: CGFloat = 10
 
     let notchWidth: CGFloat
     let topInset: CGFloat
@@ -69,9 +75,13 @@ struct NotchHUDLayout: Equatable {
     func expandedSize(providerCount: Int, staleCount: Int) -> CGSize {
         let visibleProviders = max(providerCount, 1)
         let extraProviders = max(visibleProviders - 1, 0)
-        let multiProviderMargin: CGFloat = extraProviders > 0 ? 48 : 0
-        let extraHeight = CGFloat(extraProviders * 118 + staleCount * 34) + multiProviderMargin
-        return CGSize(width: max(compactSize.width + 32, 328), height: max(topInset + 126 + extraHeight, 154 + extraHeight))
+        let topReserve = min(topInset, Self.maxExpandedTopInset)
+        let baseHeight = max(topReserve + Self.expandedContentHeight, Self.expandedMinimumHeight)
+        let extraHeight = CGFloat(extraProviders) * Self.extraProviderHeight
+            + CGFloat(staleCount) * Self.staleStatusHeight
+            + (extraProviders > 0 ? Self.multiProviderBottomAllowance : 0)
+
+        return CGSize(width: max(compactSize.width + 32, 328), height: baseHeight + extraHeight)
     }
 
     var topBandHeight: CGFloat {
@@ -179,9 +189,21 @@ private struct NotchIslandShape: Shape {
 
 struct PaceSummaryView: View {
     let dashboard: UsageDashboardSnapshot
+    let providerSpacing: CGFloat
+    let providerItemSpacing: CGFloat
+
+    init(
+        dashboard: UsageDashboardSnapshot,
+        providerSpacing: CGFloat = 11,
+        providerItemSpacing: CGFloat = 10
+    ) {
+        self.dashboard = dashboard
+        self.providerSpacing = providerSpacing
+        self.providerItemSpacing = providerItemSpacing
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 11) {
+        VStack(alignment: .leading, spacing: providerSpacing) {
             if dashboard.hasUsageData {
                 ForEach(Array(dashboard.providers.enumerated()), id: \.element.id) { index, providerSnapshot in
                     if index > 0 {
@@ -189,7 +211,7 @@ struct PaceSummaryView: View {
                             .opacity(0.6)
                     }
 
-                    ProviderSummaryView(providerSnapshot: providerSnapshot)
+                    ProviderSummaryView(providerSnapshot: providerSnapshot, itemSpacing: providerItemSpacing)
                 }
             } else {
                 StatusOnlyView(snapshot: dashboard.fallback)
@@ -200,13 +222,14 @@ struct PaceSummaryView: View {
 
 private struct ProviderSummaryView: View {
     let providerSnapshot: ProviderUsageSnapshot
+    let itemSpacing: CGFloat
 
     private var snapshot: UsageSnapshot {
         providerSnapshot.snapshot
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: itemSpacing) {
             if snapshot.hasUsageData {
                 ProviderRecommendationLine(
                     provider: providerSnapshot.provider,
@@ -333,9 +356,13 @@ private struct NotchExpandedSummaryView: View {
         VStack(spacing: 8) {
             NotchCompactSummaryView(dashboard: dashboard, layout: layout)
 
-            PaceSummaryView(dashboard: dashboard)
+            PaceSummaryView(
+                dashboard: dashboard,
+                providerSpacing: 8,
+                providerItemSpacing: 8
+            )
                 .padding(.horizontal, 14)
-                .padding(.bottom, 12)
+                .padding(.bottom, 10)
         }
     }
 }
