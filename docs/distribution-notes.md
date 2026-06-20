@@ -2,8 +2,9 @@
 
 ## v0.2.0 Release
 
-`v0.2.0` adds the notch island HUD line and keeps the original floating HUD
-available as a switchable mode.
+`v0.2.0` adds the notch island HUD and keeps the original floating HUD available
+as a switchable mode. It also adds optional Claude Code usage display through
+Claude Code statusline `rate_limits`.
 
 Included in this release:
 
@@ -11,6 +12,10 @@ Included in this release:
 - drag docking from the notch island into floating mode
 - drag docking from floating mode back into the notch island
 - refined notch island width and hover expansion behavior
+- compact notch provider selection for Codex or Claude
+- optional Claude Code usage display from a statusline-backed cache
+- stale Claude usage values remain visible with dimmed indicators
+- expanded notch height fits its rendered content
 - removal of the floating HUD opacity control
 
 ## v0.1.0 Baseline
