@@ -5,7 +5,7 @@ import UserNotifications
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
-    @Published private(set) var snapshot = UsageSnapshot.placeholder
+    @Published private(set) var dashboard = UsageDashboardSnapshot.placeholder
     @Published private(set) var isHUDVisible: Bool = {
         if UserDefaults.standard.object(forKey: hudVisibilityDefaultsKey) == nil {
             return true
@@ -13,21 +13,59 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
         return UserDefaults.standard.bool(forKey: hudVisibilityDefaultsKey)
     }()
+    @Published private(set) var isHUDCollapsed: Bool = UserDefaults.standard.bool(forKey: hudCollapsedDefaultsKey)
+    @Published private(set) var hudDisplayMode: HUDDisplayMode = {
+        guard
+            let rawValue = UserDefaults.standard.string(forKey: HUDDisplayMode.defaultsKey),
+            let displayMode = HUDDisplayMode(rawValue: rawValue)
+        else {
+            return .notchIsland
+        }
+
+        return displayMode
+    }()
+    @Published private(set) var notchCompactProvider: UsageProvider = {
+        guard
+            let rawValue = UserDefaults.standard.string(forKey: UsageProvider.notchCompactDefaultsKey),
+            let provider = UsageProvider(rawValue: rawValue)
+        else {
+            return .codex
+        }
+
+        return provider
+    }()
 
     private static let hudVisibilityDefaultsKey = "showsHUD"
+    private static let hudCollapsedDefaultsKey = "hudCollapsed"
     private static let hudOriginXDefaultsKey = "hudOriginX"
     private static let hudOriginYDefaultsKey = "hudOriginY"
-    private let authTokenStore = CodexAuthTokenStore()
-    private let usageClient = WhamUsageClient()
-    private let usageHistoryStore = UsageHistoryStore()
+    private let codexAuthTokenStore = CodexAuthTokenStore()
+    private let codexUsageClient = WhamUsageClient()
+    private let claudeRateLimitCacheStore = ClaudeRateLimitCacheStore()
+    private let codexUsageHistoryStore = UsageHistoryStore()
+    private let claudeUsageHistoryStore = UsageHistoryStore(
+        fileURL: UsageHistoryStore.defaultFileURL()
+            .deletingLastPathComponent()
+            .appendingPathComponent("claude-usage-samples.json", isDirectory: false)
+    )
 
     private var hudPanel: NSPanel?
-    private var hudHostingView: NSHostingView<HUDView>?
+    private var hudHostingView: HUDHostingView?
     private var demoPanels: [NSPanel] = []
     private weak var menuBarState: MenuBarState?
     private var timer: Timer?
     private var isPaused = false
-    private var lastSuccessfulSnapshot: UsageSnapshot?
+    private var isHUDExpanded = false
+    private var isNotchPanelExpanded = false
+    private var wantsHUDExpanded = false
+    private var isNotchDragActive = false
+    private var shouldCollapseAfterNotchDrag = false
+    private var notchDragOffset: CGFloat = 0
+    private var isNotchDetachReady = false
+    private var notchExpandedMeasuredHeight: CGFloat?
+    private var hudFrameAnimationTimer: Timer?
+    private var notchCollapseTimer: Timer?
+    private var lastSuccessfulSnapshots: [UsageProvider: UsageSnapshot] = [:]
     private var deliveredNotificationKeys = Set<String>()
     private lazy var notificationCenter: UNUserNotificationCenter? = {
         guard Bundle.main.bundleURL.pathExtension == "app" else {
@@ -46,6 +84,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         }
 
         createHUD()
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(screenParametersDidChange),
+            name: NSApplication.didChangeScreenParametersNotification,
+            object: nil
+        )
         requestNotificationAuthorization()
         refreshUsage()
         startPolling()
@@ -53,12 +97,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
     func applicationWillTerminate(_ notification: Notification) {
         timer?.invalidate()
+        hudFrameAnimationTimer?.invalidate()
+        notchCollapseTimer?.invalidate()
         NotificationCenter.default.removeObserver(self)
     }
 
     func refreshUsage() {
-        if lastSuccessfulSnapshot == nil {
-            snapshot = .placeholder.withPaused(isPaused)
+        if lastSuccessfulSnapshots.isEmpty {
+            dashboard = UsageDashboardSnapshot.placeholder.withPaused(isPaused)
             updateHUD()
         }
 
@@ -69,7 +115,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
     func setPaused(_ isPaused: Bool) {
         self.isPaused = isPaused
-        snapshot = snapshot.withPaused(isPaused)
+        dashboard = dashboard.withPaused(isPaused)
 
         if isPaused {
             timer?.invalidate()
@@ -87,15 +133,65 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         applyHUDVisibility()
     }
 
+    func setHUDDisplayMode(_ displayMode: HUDDisplayMode) {
+        guard hudDisplayMode != displayMode else {
+            return
+        }
+
+        if hudDisplayMode == .floating, let hudPanel {
+            persistHUDOrigin(hudPanel.frame.origin)
+        }
+
+        hudDisplayMode = displayMode
+        UserDefaults.standard.set(displayMode.rawValue, forKey: HUDDisplayMode.defaultsKey)
+        isHUDExpanded = false
+        isNotchPanelExpanded = false
+        wantsHUDExpanded = false
+        notchExpandedMeasuredHeight = nil
+        resetNotchDragState()
+        hudFrameAnimationTimer?.invalidate()
+        hudFrameAnimationTimer = nil
+        notchCollapseTimer?.invalidate()
+        notchCollapseTimer = nil
+
+        configureHUDPanelForCurrentMode()
+        updateHUD()
+        resizeHUDPanel(to: currentHUDSize, animated: displayMode == .floating, reposition: true)
+        applyHUDVisibility()
+    }
+
+    func setHUDCollapsed(_ isCollapsed: Bool) {
+        isHUDCollapsed = isCollapsed
+        UserDefaults.standard.set(isCollapsed, forKey: Self.hudCollapsedDefaultsKey)
+
+        guard hudDisplayMode == .floating else {
+            return
+        }
+
+        updateHUD()
+        resizeHUDPanel(to: currentHUDSize, animated: true)
+    }
+
+    func setNotchCompactProvider(_ provider: UsageProvider) {
+        guard notchCompactProvider != provider else {
+            return
+        }
+
+        notchCompactProvider = provider
+        UserDefaults.standard.set(provider.rawValue, forKey: UsageProvider.notchCompactDefaultsKey)
+        updateHUD(animated: hudDisplayMode == .notchIsland)
+    }
+
     func setMenuBarState(_ menuBarState: MenuBarState) {
         self.menuBarState = menuBarState
-        if menuBarState.snapshot != snapshot {
-            menuBarState.snapshot = snapshot
+        if menuBarState.dashboard != dashboard {
+            menuBarState.dashboard = dashboard
         }
     }
 
     private func applyHUDVisibility() {
         if isHUDVisible {
+            hudPanel?.alphaValue = 1
             hudPanel?.orderFrontRegardless()
         } else {
             hudPanel?.orderOut(nil)
@@ -118,81 +214,185 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     }
 
     private func loadUsage() async {
-        do {
-            let token = try authTokenStore.accessToken()
-            let freshSnapshot = try await usageClient.fetchSnapshot(accessToken: token)
-            recordUsageSample(for: freshSnapshot)
-            let trendedSnapshot = freshSnapshot.withTrend(usageTrend(now: freshSnapshot.lastRefreshedAt))
-            lastSuccessfulSnapshot = trendedSnapshot
-            snapshot = trendedSnapshot.withPaused(isPaused)
-            updateHUD()
-            deliverNotificationsIfNeeded(for: snapshot)
-        } catch {
-            let message = friendlyMessage(for: error)
+        async let codexResult = loadCodexUsage()
+        let claudeResult = loadClaudeUsage()
+        let results = await [codexResult, claudeResult]
+        var providerSnapshots: [ProviderUsageSnapshot] = []
 
-            if let lastSuccessfulSnapshot {
-                snapshot = lastSuccessfulSnapshot.markingStale(message: message).withPaused(isPaused)
-            } else {
-                snapshot = UsageSnapshot.unavailable(message: message).withPaused(isPaused)
+        for result in results {
+            switch result {
+            case .success(let provider, let snapshot):
+                if snapshot.hasUsageData {
+                    lastSuccessfulSnapshots[provider] = snapshot
+                }
+
+                let pausedSnapshot = snapshot.withPaused(isPaused)
+                providerSnapshots.append(ProviderUsageSnapshot(provider: provider, snapshot: pausedSnapshot))
+                deliverNotificationsIfNeeded(for: provider, snapshot: pausedSnapshot)
+            case .failure(let provider, let error):
+                let message = friendlyMessage(for: error)
+                if let lastSuccessfulSnapshot = lastSuccessfulSnapshots[provider] {
+                    providerSnapshots.append(
+                        ProviderUsageSnapshot(
+                            provider: provider,
+                            snapshot: lastSuccessfulSnapshot.markingStale(message: message).withPaused(isPaused)
+                        )
+                    )
+                } else {
+                    providerSnapshots.append(
+                        ProviderUsageSnapshot(
+                            provider: provider,
+                            snapshot: UsageSnapshot.unavailable(message: message).withPaused(isPaused)
+                        )
+                    )
+                }
             }
+        }
 
-            updateHUD()
+        let sortedProviderSnapshots = providerSnapshots.sorted {
+            $0.provider.sortIndex < $1.provider.sortIndex
+        }
+
+        if sortedProviderSnapshots.isEmpty {
+            dashboard = UsageDashboardSnapshot(
+                providers: [],
+                fallback: UsageSnapshot.unavailable(message: "Usage data is unavailable").withPaused(isPaused)
+            )
+        } else {
+            dashboard = UsageDashboardSnapshot(
+                providers: sortedProviderSnapshots,
+                fallback: sortedProviderSnapshots[0].snapshot
+            )
+        }
+
+        prepareNotchForExpandedContentChange()
+        updateHUD()
+    }
+
+    private func loadCodexUsage() async -> ProviderLoadResult {
+        do {
+            let token = try codexAuthTokenStore.accessToken()
+            let freshSnapshot = try await codexUsageClient.fetchSnapshot(accessToken: token)
+            recordUsageSample(for: freshSnapshot, provider: .codex)
+            return .success(
+                .codex,
+                freshSnapshot.withTrend(usageTrend(now: freshSnapshot.lastRefreshedAt, provider: .codex))
+            )
+        } catch {
+            return .failure(.codex, error)
         }
     }
 
-    private func usageTrend(now: Date) -> UsageTrend? {
+    private func loadClaudeUsage() -> ProviderLoadResult {
         do {
-            return try usageHistoryStore.recentTrend(now: now)
+            let snapshot = try claudeRateLimitCacheStore.snapshot()
+
+            if snapshot.state == .fresh {
+                recordUsageSample(for: snapshot, provider: .claudeCode)
+            }
+
+            return .success(
+                .claudeCode,
+                snapshot.withTrend(usageTrend(now: snapshot.lastRefreshedAt, provider: .claudeCode))
+            )
         } catch {
-            NSLog("Codex Pacekeeper failed to load usage trend: \(error.localizedDescription)")
+            return .failure(.claudeCode, error)
+        }
+    }
+
+    private func usageTrend(now: Date, provider: UsageProvider) -> UsageTrend? {
+        do {
+            return try usageHistoryStore(for: provider).recentTrend(now: now)
+        } catch {
+            NSLog("Codex Pacekeeper failed to load \(provider.displayName) usage trend: \(error.localizedDescription)")
             return nil
         }
     }
 
-    private func recordUsageSample(for snapshot: UsageSnapshot) {
+    private func recordUsageSample(for snapshot: UsageSnapshot, provider: UsageProvider) {
         do {
-            try usageHistoryStore.record(UsageSample(snapshot: snapshot))
+            try usageHistoryStore(for: provider).record(UsageSample(snapshot: snapshot))
         } catch {
-            NSLog("Codex Pacekeeper failed to record usage sample: \(error.localizedDescription)")
+            NSLog("Codex Pacekeeper failed to record \(provider.displayName) usage sample: \(error.localizedDescription)")
+        }
+    }
+
+    private func usageHistoryStore(for provider: UsageProvider) -> UsageHistoryStore {
+        switch provider {
+        case .codex:
+            return codexUsageHistoryStore
+        case .claudeCode:
+            return claudeUsageHistoryStore
         }
     }
 
     private func createHUD() {
-        let view = HUDView(snapshot: snapshot)
-        let hostingView = DraggableHUDHostingView(rootView: view)
-        let panel = makeHUDPanel(frame: initialHUDFrame(), hostingView: hostingView)
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(hudPanelDidMove),
-            name: NSWindow.didMoveNotification,
-            object: panel
-        )
+        let view = makeHUDView()
+        let hostingView = HUDHostingView(rootView: view)
+        hostingView.applyTransparentBackground()
+        hostingView.onHoverChanged = { [weak self] isHovered in
+            Task { @MainActor [weak self] in
+                self?.setHUDExpanded(isHovered)
+            }
+        }
+        hostingView.onNotchDragBegan = { [weak self] in
+            self?.beginNotchDrag()
+        }
+        hostingView.onNotchDragChanged = { [weak self] deltaY in
+            self?.updateNotchDrag(deltaY: deltaY)
+        }
+        hostingView.onNotchDetachRequested = { [weak self] screenPoint in
+            self?.detachNotchHUDForContinuousDrag(at: screenPoint)
+        }
+        hostingView.onNotchDragEnded = { [weak self] screenPoint in
+            self?.finishNotchDrag(at: screenPoint)
+        }
+        hostingView.onFloatingDragEnded = { [weak self] in
+            self?.finishFloatingDrag()
+        }
+        let panel = makeHUDPanel(frame: currentHUDFrame(size: currentHUDSize, reposition: true), hostingView: hostingView)
 
         hudHostingView = hostingView
         hudPanel = panel
+        configureHUDPanelForCurrentMode()
         applyHUDVisibility()
     }
 
     private func createDemoHUDs() {
-        let snapshots = DemoUsageSnapshots.make()
-        let panelSize = NSSize(width: 280, height: 120)
+        let dashboards = DemoUsageSnapshots.make()
+        let layout = fallbackHUDLayout()
         let visibleFrame = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 900, height: 800)
         let startX = visibleFrame.minX + 80
-        var y = visibleFrame.maxY - panelSize.height - 60
+        var y = visibleFrame.maxY - 60
 
-        demoPanels = snapshots.map { snapshot in
+        demoPanels = dashboards.map { dashboard in
+            let panelSize = demoHUDSize(layout: layout, dashboard: dashboard)
+            y -= panelSize.height
+            let hostingView = HUDHostingView(rootView: HUDView(
+                dashboard: dashboard,
+                displayMode: hudDisplayMode,
+                isNotchExpanded: true,
+                notchLayout: layout,
+                notchCompactProvider: notchCompactProvider,
+                notchExpandedHeight: nil,
+                notchDragOffset: 0,
+                isNotchDetachReady: false,
+                isFloatingCollapsed: false,
+                onNotchExpandedHeightChanged: nil
+            ))
+            hostingView.applyTransparentBackground()
             let panel = makeHUDPanel(
                 frame: NSRect(x: startX, y: y, width: panelSize.width, height: panelSize.height),
-                hostingView: DraggableHUDHostingView(rootView: HUDView(snapshot: snapshot))
+                hostingView: hostingView
             )
             panel.orderFrontRegardless()
-            y -= panelSize.height + 14
+            y -= 14
             return panel
         }
     }
 
-    private func makeHUDPanel(frame: NSRect, hostingView: DraggableHUDHostingView) -> NSPanel {
-        let panel = DraggableHUDPanel(
+    private func makeHUDPanel(frame: NSRect, hostingView: HUDHostingView) -> NSPanel {
+        let panel = PaceHUDPanel(
             contentRect: frame,
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
@@ -200,31 +400,113 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         )
 
         panel.isFloatingPanel = true
-        panel.level = .floating
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.backgroundColor = .clear
         panel.isOpaque = false
-        panel.hasShadow = true
         panel.isReleasedWhenClosed = false
-        panel.isMovableByWindowBackground = true
+        panel.minSize = NSSize(width: 1, height: 1)
+        panel.contentMinSize = NSSize(width: 1, height: 1)
+        hostingView.frame = NSRect(origin: .zero, size: frame.size)
         panel.contentView = hostingView
+        panel.setFrame(frame, display: false)
+        configureHUDPanel(panel, hostingView: hostingView)
 
         return panel
     }
 
-    private func initialHUDFrame() -> NSRect {
-        let size = NSSize(width: 280, height: 120)
+    private func configureHUDPanelForCurrentMode() {
+        guard let panel = hudPanel, let hudHostingView else {
+            return
+        }
+
+        configureHUDPanel(panel, hostingView: hudHostingView)
+    }
+
+    private func configureHUDPanel(_ panel: NSPanel, hostingView: HUDHostingView) {
+        switch hudDisplayMode {
+        case .notchIsland:
+            panel.level = .statusBar
+            panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+            panel.hasShadow = false
+            panel.isMovableByWindowBackground = false
+            hostingView.canDragWindow = false
+            hostingView.canDetachFromNotch = true
+        case .floating:
+            panel.level = .floating
+            panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+            panel.hasShadow = true
+            panel.isMovableByWindowBackground = false
+            hostingView.canDragWindow = true
+            hostingView.canDetachFromNotch = false
+        }
+
+        panel.alphaValue = 1
+    }
+
+    private func demoHUDSize(layout: NotchHUDLayout, dashboard: UsageDashboardSnapshot) -> NSSize {
+        switch hudDisplayMode {
+        case .notchIsland:
+            return layout.expandedSize(
+                providerCount: dashboard.providers.count,
+                staleCount: dashboard.staleProviderCount
+            )
+        case .floating:
+            return FloatingHUDLayout.expandedSize(
+                providerCount: dashboard.providers.count,
+                staleCount: dashboard.staleProviderCount
+            )
+        }
+    }
+
+    private func currentHUDFrame(size: NSSize, reposition: Bool = false) -> NSRect {
+        switch hudDisplayMode {
+        case .notchIsland:
+            return notchHUDFrame(size: size)
+        case .floating:
+            return floatingHUDFrame(size: size, reposition: reposition)
+        }
+    }
+
+    private func notchHUDFrame(size: NSSize) -> NSRect {
+        guard let screen = currentHUDScreen() else {
+            return NSRect(x: 80, y: 640, width: size.width, height: size.height)
+        }
+
+        return notchHUDFrame(size: size, on: screen)
+    }
+
+    private func notchHUDFrame(size: NSSize, on screen: NSScreen) -> NSRect {
+        let size = pixelAligned(size, for: screen)
+        let centerX = notchCenterX(for: screen) ?? screen.frame.midX
+        let frame = NSRect(
+            x: centerX - size.width / 2,
+            y: screen.frame.maxY - size.height,
+            width: size.width,
+            height: size.height
+        )
+
+        return pixelAligned(frame, for: screen)
+    }
+
+    private func floatingHUDFrame(size: NSSize, reposition: Bool) -> NSRect {
+        if !reposition, let hudPanel {
+            return resizedFloatingHUDFrame(size: size, currentFrame: hudPanel.frame)
+        }
 
         if
             UserDefaults.standard.object(forKey: Self.hudOriginXDefaultsKey) != nil,
             UserDefaults.standard.object(forKey: Self.hudOriginYDefaultsKey) != nil
         {
-            return NSRect(
+            let savedOrigin = NSPoint(
                 x: UserDefaults.standard.double(forKey: Self.hudOriginXDefaultsKey),
-                y: UserDefaults.standard.double(forKey: Self.hudOriginYDefaultsKey),
+                y: UserDefaults.standard.double(forKey: Self.hudOriginYDefaultsKey)
+            )
+
+            return constrainedHUDFrame(NSRect(
+                x: savedOrigin.x,
+                y: savedOrigin.y,
                 width: size.width,
                 height: size.height
-            )
+            ), visibleFrame: bestVisibleFrame(for: savedOrigin))
         }
 
         if let visibleFrame = NSScreen.main?.visibleFrame {
@@ -239,39 +521,487 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         return NSRect(x: 80, y: 640, width: size.width, height: size.height)
     }
 
-    @objc private func hudPanelDidMove(_ notification: Notification) {
-        guard let panel = notification.object as? NSPanel else {
+    private func resizedFloatingHUDFrame(size: NSSize, currentFrame: NSRect) -> NSRect {
+        var frame = currentFrame
+        let maxY = frame.maxY
+        frame.size = size
+        frame.origin.y = maxY - size.height
+        return constrainedHUDFrame(frame, visibleFrame: hudPanel?.screen?.visibleFrame)
+    }
+
+    @objc private func screenParametersDidChange(_ notification: Notification) {
+        guard hudDisplayMode == .notchIsland else {
             return
         }
 
-        UserDefaults.standard.set(panel.frame.origin.x, forKey: Self.hudOriginXDefaultsKey)
-        UserDefaults.standard.set(panel.frame.origin.y, forKey: Self.hudOriginYDefaultsKey)
+        notchExpandedMeasuredHeight = nil
+        updateHUD()
+        resizeHUDPanel(to: currentHUDSize, animated: false, reposition: true)
     }
 
-    private func updateHUD() {
-        hudHostingView?.rootView = HUDView(snapshot: snapshot)
-        menuBarState?.snapshot = snapshot
+    private func constrainedHUDFrame(_ frame: NSRect, visibleFrame: NSRect? = nil) -> NSRect {
+        guard let visibleFrame = visibleFrame ?? bestVisibleFrame(for: frame.origin) else {
+            return frame
+        }
+
+        var constrainedFrame = frame
+        if constrainedFrame.maxX > visibleFrame.maxX {
+            constrainedFrame.origin.x = visibleFrame.maxX - constrainedFrame.width
+        }
+        if constrainedFrame.minX < visibleFrame.minX {
+            constrainedFrame.origin.x = visibleFrame.minX
+        }
+        if constrainedFrame.maxY > visibleFrame.maxY {
+            constrainedFrame.origin.y = visibleFrame.maxY - constrainedFrame.height
+        }
+        if constrainedFrame.minY < visibleFrame.minY {
+            constrainedFrame.origin.y = visibleFrame.minY
+        }
+
+        return constrainedFrame
+    }
+
+    private func bestVisibleFrame(for point: NSPoint) -> NSRect? {
+        if let screen = NSScreen.screens.first(where: { $0.visibleFrame.contains(point) }) {
+            return screen.visibleFrame
+        }
+
+        return NSScreen.main?.visibleFrame
+    }
+
+    private func persistHUDOrigin(_ origin: CGPoint) {
+        UserDefaults.standard.set(origin.x, forKey: Self.hudOriginXDefaultsKey)
+        UserDefaults.standard.set(origin.y, forKey: Self.hudOriginYDefaultsKey)
+    }
+
+    private func updateHUD(animated: Bool = false) {
+        if animated {
+            withAnimation(.easeOut(duration: NotchHUDAnimation.duration)) {
+                hudHostingView?.rootView = makeHUDView()
+            }
+        } else {
+            hudHostingView?.rootView = makeHUDView()
+        }
+        menuBarState?.dashboard = dashboard
+    }
+
+    private var currentHUDSize: NSSize {
+        switch hudDisplayMode {
+        case .notchIsland:
+            let layout = currentHUDLayout()
+            return isNotchPanelExpanded
+                ? notchExpandedSize(layout: layout)
+                : layout.compactSize
+        case .floating:
+            return isHUDCollapsed
+                ? FloatingHUDLayout.collapsedSize
+                : FloatingHUDLayout.expandedSize(providerCount: dashboard.providers.count, staleCount: dashboard.staleProviderCount)
+        }
+    }
+
+    private func notchExpandedSize(layout: NotchHUDLayout) -> NSSize {
+        let fallbackSize = layout.expandedSize(
+            providerCount: dashboard.providers.count,
+            staleCount: dashboard.staleProviderCount
+        )
+        guard let notchExpandedMeasuredHeight else {
+            return fallbackSize
+        }
+
+        return NSSize(
+            width: fallbackSize.width,
+            height: max(layout.compactSize.height, notchExpandedMeasuredHeight)
+        )
+    }
+
+    private func resizeHUDPanel(to targetSize: NSSize, animated: Bool, reposition: Bool = false) {
+        guard let panel = hudPanel else {
+            return
+        }
+
+        let frame = currentHUDFrame(size: targetSize, reposition: reposition)
+
+        guard panel.frame != frame else {
+            return
+        }
+
+        if animated, hudDisplayMode == .floating {
+            animateHUDPanel(to: frame)
+        } else {
+            hudFrameAnimationTimer?.invalidate()
+            hudFrameAnimationTimer = nil
+            panel.setFrame(frame, display: true)
+            panel.contentView?.frame = NSRect(origin: .zero, size: frame.size)
+        }
+
+        if hudDisplayMode == .floating {
+            persistHUDOrigin(frame.origin)
+        }
+    }
+
+    private func animateHUDPanel(to targetFrame: NSRect) {
+        guard let panel = hudPanel else {
+            return
+        }
+
+        hudFrameAnimationTimer?.invalidate()
+
+        let startFrame = panel.frame
+        let startDate = Date()
+        let duration: TimeInterval = 0.16
+
+        let animationTimer = Timer(timeInterval: 1 / 60, repeats: true) { [weak self, weak panel] timer in
+            Task { @MainActor [weak self, weak panel] in
+                guard let self, let panel else {
+                    timer.invalidate()
+                    return
+                }
+
+                let elapsed = Date().timeIntervalSince(startDate)
+                let progress = min(max(elapsed / duration, 0), 1)
+                let easedProgress = 1 - pow(1 - progress, 3)
+                let frame = NSRect(
+                    x: startFrame.origin.x + (targetFrame.origin.x - startFrame.origin.x) * easedProgress,
+                    y: startFrame.origin.y + (targetFrame.origin.y - startFrame.origin.y) * easedProgress,
+                    width: startFrame.width + (targetFrame.width - startFrame.width) * easedProgress,
+                    height: startFrame.height + (targetFrame.height - startFrame.height) * easedProgress
+                )
+
+                panel.setFrame(frame, display: true)
+                panel.contentView?.frame = NSRect(origin: .zero, size: frame.size)
+
+                if progress >= 1 {
+                    panel.setFrame(targetFrame, display: true)
+                    panel.contentView?.frame = NSRect(origin: .zero, size: targetFrame.size)
+                    timer.invalidate()
+                    if self.hudFrameAnimationTimer === timer {
+                        self.hudFrameAnimationTimer = nil
+                    }
+                }
+            }
+        }
+        RunLoop.main.add(animationTimer, forMode: .common)
+        hudFrameAnimationTimer = animationTimer
+    }
+
+    private func makeHUDView() -> HUDView {
+        HUDView(
+            dashboard: dashboard,
+            displayMode: hudDisplayMode,
+            isNotchExpanded: isHUDExpanded,
+            notchLayout: currentHUDLayout(),
+            notchCompactProvider: notchCompactProvider,
+            notchExpandedHeight: notchExpandedMeasuredHeight,
+            notchDragOffset: notchDragOffset,
+            isNotchDetachReady: isNotchDetachReady,
+            isFloatingCollapsed: isHUDCollapsed,
+            onNotchExpandedHeightChanged: { [weak self] height in
+                Task { @MainActor [weak self] in
+                    self?.setNotchExpandedMeasuredHeight(height)
+                }
+            }
+        )
+    }
+
+    private func prepareNotchForExpandedContentChange() {
+        guard hudDisplayMode == .notchIsland, isNotchPanelExpanded else {
+            return
+        }
+
+        notchExpandedMeasuredHeight = nil
+        resizeHUDPanel(to: currentHUDSize, animated: false, reposition: true)
+    }
+
+    private func setNotchExpandedMeasuredHeight(_ measuredHeight: CGFloat) {
+        guard hudDisplayMode == .notchIsland, isNotchPanelExpanded, isHUDExpanded else {
+            return
+        }
+
+        let normalizedHeight = measuredHeight.rounded(.up)
+        guard notchExpandedMeasuredHeight.map({ abs($0 - normalizedHeight) > 0.5 }) ?? true else {
+            return
+        }
+
+        notchExpandedMeasuredHeight = normalizedHeight
+        updateHUD()
+        resizeHUDPanel(to: currentHUDSize, animated: false, reposition: true)
+    }
+
+    private func currentHUDScreen() -> NSScreen? {
+        switch hudDisplayMode {
+        case .notchIsland:
+            return notchedHUDScreen() ?? NSScreen.main ?? NSScreen.screens.first
+        case .floating:
+            return NSScreen.main ?? NSScreen.screens.first
+        }
+    }
+
+    private func notchedHUDScreen() -> NSScreen? {
+        NSScreen.screens.first { screen in
+            notchWidth(for: screen) != nil
+        }
+    }
+
+    private func currentHUDLayout() -> NotchHUDLayout {
+        guard let screen = currentHUDScreen() else {
+            return fallbackHUDLayout()
+        }
+
+        return NotchHUDLayout(
+            notchWidth: notchWidth(for: screen),
+            topInset: screen.safeAreaInsets.top
+        )
+    }
+
+    private func fallbackHUDLayout() -> NotchHUDLayout {
+        NotchHUDLayout(notchWidth: nil, topInset: 32)
+    }
+
+    private func notchWidth(for screen: NSScreen) -> CGFloat? {
+        guard
+            let leftArea = screen.auxiliaryTopLeftArea,
+            let rightArea = screen.auxiliaryTopRightArea
+        else {
+            return nil
+        }
+
+        let gapWidth = rightArea.minX - leftArea.maxX
+        return gapWidth > 0 ? gapWidth : nil
+    }
+
+    private func notchCenterX(for screen: NSScreen) -> CGFloat? {
+        guard
+            let leftArea = screen.auxiliaryTopLeftArea,
+            let rightArea = screen.auxiliaryTopRightArea
+        else {
+            return nil
+        }
+
+        let gapWidth = rightArea.minX - leftArea.maxX
+        guard gapWidth > 0 else {
+            return nil
+        }
+
+        return leftArea.maxX + gapWidth / 2
+    }
+
+    private func pixelAligned(_ size: NSSize, for screen: NSScreen) -> NSSize {
+        let scale = max(screen.backingScaleFactor, 1)
+        return NSSize(
+            width: (size.width * scale).rounded() / scale,
+            height: (size.height * scale).rounded() / scale
+        )
+    }
+
+    private func pixelAligned(_ frame: NSRect, for screen: NSScreen) -> NSRect {
+        let scale = max(screen.backingScaleFactor, 1)
+        return NSRect(
+            x: (frame.origin.x * scale).rounded() / scale,
+            y: (frame.origin.y * scale).rounded() / scale,
+            width: (frame.width * scale).rounded() / scale,
+            height: (frame.height * scale).rounded() / scale
+        )
+    }
+
+    private func beginNotchDrag() {
+        guard hudDisplayMode == .notchIsland, isHUDExpanded else {
+            return
+        }
+
+        isNotchDragActive = true
+        shouldCollapseAfterNotchDrag = false
+        notchCollapseTimer?.invalidate()
+        notchCollapseTimer = nil
+    }
+
+    private func updateNotchDrag(deltaY: CGFloat) {
+        guard hudDisplayMode == .notchIsland, isHUDExpanded, isNotchDragActive else {
+            return
+        }
+
+        let pullDistance = max(deltaY, 0)
+        notchDragOffset = min(pullDistance * 0.62, HUDDockingInteraction.notchDetachMaxOffset)
+        isNotchDetachReady = pullDistance >= HUDDockingInteraction.notchDetachThreshold
+        updateHUD()
+    }
+
+    private func detachNotchHUDForContinuousDrag(at screenPoint: NSPoint) {
+        guard hudDisplayMode == .notchIsland else {
+            return
+        }
+
+        isHUDCollapsed = false
+        UserDefaults.standard.set(false, forKey: Self.hudCollapsedDefaultsKey)
+
+        resetNotchDragState()
+        hudDisplayMode = .floating
+        UserDefaults.standard.set(HUDDisplayMode.floating.rawValue, forKey: HUDDisplayMode.defaultsKey)
+        isHUDExpanded = false
+        isNotchPanelExpanded = false
+        wantsHUDExpanded = false
+        notchExpandedMeasuredHeight = nil
+        notchCollapseTimer?.invalidate()
+        notchCollapseTimer = nil
+        hudFrameAnimationTimer?.invalidate()
+        hudFrameAnimationTimer = nil
+
+        configureHUDPanelForCurrentMode()
+        updateHUD()
+        placeFloatingHUDForDrag(at: screenPoint)
+        applyHUDVisibility()
+    }
+
+    private func finishNotchDrag(at screenPoint: NSPoint) {
+        guard hudDisplayMode == .notchIsland, isNotchDragActive else {
+            resetNotchDragState()
+            return
+        }
+
+        let shouldCollapse = shouldCollapseAfterNotchDrag
+        resetNotchDragState()
+        if shouldCollapse {
+            setHUDExpanded(false)
+        } else {
+            updateHUD(animated: true)
+        }
+    }
+
+    private func placeFloatingHUDForDrag(at screenPoint: NSPoint) {
+        guard let hudPanel else {
+            return
+        }
+
+        let size = FloatingHUDLayout.expandedSize(
+            providerCount: dashboard.providers.count,
+            staleCount: dashboard.staleProviderCount
+        )
+        let targetFrame = constrainedHUDFrame(
+            NSRect(
+                x: screenPoint.x - size.width / 2,
+                y: screenPoint.y - size.height / 2,
+                width: size.width,
+                height: size.height
+            ),
+            visibleFrame: bestVisibleFrame(for: screenPoint)
+        )
+        hudPanel.setFrame(targetFrame, display: true)
+        hudPanel.contentView?.frame = NSRect(origin: .zero, size: targetFrame.size)
+        persistHUDOrigin(targetFrame.origin)
+    }
+
+    private func finishFloatingDrag() {
+        guard hudDisplayMode == .floating, let hudPanel else {
+            return
+        }
+
+        persistHUDOrigin(hudPanel.frame.origin)
+
+        if shouldDockFloatingHUD(frame: hudPanel.frame) {
+            setHUDDisplayMode(.notchIsland)
+        }
+    }
+
+    private func shouldDockFloatingHUD(frame: NSRect) -> Bool {
+        guard let screen = notchedHUDScreen() else {
+            return false
+        }
+
+        let layout = NotchHUDLayout(
+            notchWidth: notchWidth(for: screen),
+            topInset: screen.safeAreaInsets.top
+        )
+        let topCenter = NSPoint(x: frame.midX, y: frame.maxY)
+        let targetCenterX = notchCenterX(for: screen) ?? screen.frame.midX
+        let expandedSize = layout.expandedSize(providerCount: dashboard.providers.count, staleCount: dashboard.staleProviderCount)
+        let horizontalTolerance = max(expandedSize.width / 2 + 48, 240)
+        let verticalDistanceFromTop = abs(screen.frame.maxY - topCenter.y)
+
+        return abs(topCenter.x - targetCenterX) <= horizontalTolerance
+            && verticalDistanceFromTop <= 92
+    }
+
+    private func resetNotchDragState() {
+        isNotchDragActive = false
+        shouldCollapseAfterNotchDrag = false
+        notchDragOffset = 0
+        isNotchDetachReady = false
+    }
+
+    private func setHUDExpanded(_ isExpanded: Bool) {
+        guard hudDisplayMode == .notchIsland else {
+            return
+        }
+
+        if isNotchDragActive && !isExpanded {
+            shouldCollapseAfterNotchDrag = true
+            return
+        }
+
+        guard wantsHUDExpanded != isExpanded else {
+            return
+        }
+
+        wantsHUDExpanded = isExpanded
+        let layout = currentHUDLayout()
+        notchCollapseTimer?.invalidate()
+        notchCollapseTimer = nil
+
+        if isExpanded {
+            isNotchPanelExpanded = true
+            notchExpandedMeasuredHeight = nil
+            resizeHUDPanel(
+                to: notchExpandedSize(layout: layout),
+                animated: false,
+                reposition: true
+            )
+            self.isHUDExpanded = true
+            updateHUD(animated: true)
+        } else {
+            self.isHUDExpanded = false
+            updateHUD(animated: true)
+
+            let collapseTimer = Timer.scheduledTimer(withTimeInterval: NotchHUDAnimation.duration, repeats: false) { [weak self] timer in
+                Task { @MainActor [weak self] in
+                    guard let self else {
+                        timer.invalidate()
+                        return
+                    }
+
+                    guard !self.wantsHUDExpanded, self.hudDisplayMode == .notchIsland else {
+                        return
+                    }
+
+                    self.isNotchPanelExpanded = false
+                    self.notchExpandedMeasuredHeight = nil
+                    self.resizeHUDPanel(to: layout.compactSize, animated: false, reposition: true)
+                    if self.notchCollapseTimer === timer {
+                        self.notchCollapseTimer = nil
+                    }
+                }
+            }
+            notchCollapseTimer = collapseTimer
+        }
     }
 
     private func requestNotificationAuthorization() {
         notificationCenter?.requestAuthorization(options: [.alert, .sound]) { _, _ in }
     }
 
-    private func deliverNotificationsIfNeeded(for snapshot: UsageSnapshot) {
+    private func deliverNotificationsIfNeeded(for provider: UsageProvider, snapshot: UsageSnapshot) {
         guard snapshot.state == .fresh, !snapshot.primary.isPaused else {
             return
         }
 
-        deliverNotificationIfNeeded(for: snapshot.primary)
-        deliverNotificationIfNeeded(for: snapshot.weekly)
+        deliverNotificationIfNeeded(for: snapshot.primary, provider: provider)
+        deliverNotificationIfNeeded(for: snapshot.weekly, provider: provider)
     }
 
-    private func deliverNotificationIfNeeded(for reading: PaceReading) {
+    private func deliverNotificationIfNeeded(for reading: PaceReading, provider: UsageProvider) {
         guard reading.status == .threshold || reading.status == .redline else {
             return
         }
 
-        let key = "\(reading.label)-\(reading.status.rawValue)-\(Int(reading.resetAt.timeIntervalSince1970))"
+        let key = "\(provider.rawValue)-\(reading.label)-\(reading.status.rawValue)-\(Int(reading.resetAt.timeIntervalSince1970))"
         guard !deliveredNotificationKeys.contains(key) else {
             return
         }
@@ -279,7 +1009,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         deliveredNotificationKeys.insert(key)
 
         let content = UNMutableNotificationContent()
-        content.title = reading.status == .redline ? "Redline pace" : "Ease up to stay on pace"
+        content.title = reading.status == .redline ? "\(provider.displayName) redline pace" : "\(provider.displayName) pace warning"
         content.body = "\(reading.label) \(reading.deltaPercentagePoints.signedRoundedPercentPoints) · \(reading.guidance)"
         content.sound = reading.status == .redline ? .default : nil
 
@@ -299,13 +1029,151 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
         return error.localizedDescription
     }
+
 }
 
-private final class DraggableHUDPanel: NSPanel {}
+private final class PaceHUDPanel: NSPanel {}
 
-private final class DraggableHUDHostingView: NSHostingView<HUDView> {
+private enum ProviderLoadResult {
+    case success(UsageProvider, UsageSnapshot)
+    case failure(UsageProvider, Error)
+}
+
+@MainActor
+private final class HUDHostingView: NSHostingView<HUDView> {
+    var canDragWindow = false
+    var canDetachFromNotch = false
+    var onHoverChanged: ((Bool) -> Void)?
+    var onNotchDragBegan: (() -> Void)?
+    var onNotchDragChanged: ((CGFloat) -> Void)?
+    var onNotchDetachRequested: ((NSPoint) -> Void)?
+    var onNotchDragEnded: ((NSPoint) -> Void)?
+    var onFloatingDragEnded: (() -> Void)?
+    private var hoverTrackingArea: NSTrackingArea?
+    private var notchDragStartPoint: NSPoint?
+    private var floatingDragOffset: NSSize?
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: NSView.noIntrinsicMetric, height: NSView.noIntrinsicMetric)
+    }
+
+    func applyTransparentBackground() {
+        translatesAutoresizingMaskIntoConstraints = true
+        autoresizingMask = [.width, .height]
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.clear.cgColor
+    }
+
+    override func updateTrackingAreas() {
+        if let hoverTrackingArea {
+            removeTrackingArea(hoverTrackingArea)
+        }
+
+        let trackingArea = NSTrackingArea(
+            rect: .zero,
+            options: [.activeAlways, .inVisibleRect, .mouseEnteredAndExited],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(trackingArea)
+        hoverTrackingArea = trackingArea
+
+        super.updateTrackingAreas()
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        onHoverChanged?(true)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        onHoverChanged?(false)
+    }
+
     override func mouseDown(with event: NSEvent) {
-        window?.performDrag(with: event)
+        let screenPoint = screenPoint(for: event)
+
+        if canDragWindow {
+            beginFloatingDrag(at: screenPoint)
+        } else if canDetachFromNotch {
+            notchDragStartPoint = event.locationInWindow
+            onNotchDragBegan?()
+        } else {
+            super.mouseDown(with: event)
+        }
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        let screenPoint = screenPoint(for: event)
+
+        if floatingDragOffset != nil {
+            moveFloatingWindow(to: screenPoint)
+            return
+        }
+
+        guard canDetachFromNotch, let notchDragStartPoint else {
+            super.mouseDragged(with: event)
+            return
+        }
+
+        let deltaY = notchDragStartPoint.y - event.locationInWindow.y
+        if deltaY >= HUDDockingInteraction.notchDetachThreshold {
+            self.notchDragStartPoint = nil
+            onNotchDetachRequested?(screenPoint)
+            beginFloatingDrag(at: screenPoint)
+            moveFloatingWindow(to: screenPoint)
+            return
+        }
+
+        onNotchDragChanged?(deltaY)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        if floatingDragOffset != nil {
+            floatingDragOffset = nil
+            onFloatingDragEnded?()
+            return
+        }
+
+        guard canDetachFromNotch, notchDragStartPoint != nil else {
+            super.mouseUp(with: event)
+            return
+        }
+
+        notchDragStartPoint = nil
+
+        if let window {
+            onNotchDragEnded?(window.convertPoint(toScreen: event.locationInWindow))
+        } else {
+            onNotchDragEnded?(event.locationInWindow)
+        }
+    }
+
+    private func beginFloatingDrag(at screenPoint: NSPoint) {
+        guard let window else {
+            return
+        }
+
+        floatingDragOffset = NSSize(
+            width: screenPoint.x - window.frame.origin.x,
+            height: screenPoint.y - window.frame.origin.y
+        )
+    }
+
+    private func moveFloatingWindow(to screenPoint: NSPoint) {
+        guard let window, let floatingDragOffset else {
+            return
+        }
+
+        var frame = window.frame
+        frame.origin = NSPoint(
+            x: screenPoint.x - floatingDragOffset.width,
+            y: screenPoint.y - floatingDragOffset.height
+        )
+        window.setFrame(frame, display: true)
+    }
+
+    private func screenPoint(for event: NSEvent) -> NSPoint {
+        NSEvent.mouseLocation
     }
 }
 

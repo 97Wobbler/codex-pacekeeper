@@ -1,13 +1,13 @@
 # Release Checklist
 
-## v0.1.0
+## v0.2.0
 
 Release type: unsigned MVP GitHub Release.
 
 Tag:
 
 ```text
-v0.1.0
+v0.2.0
 ```
 
 Release asset:
@@ -41,8 +41,8 @@ open dist/CodexPacekeeper.app
 
 1. Confirm the working tree only contains intended release changes.
 2. Commit the release prep changes.
-3. Create and push tag `v0.1.0`.
-4. Create a GitHub Release for `v0.1.0`.
+3. Create and push tag `v0.2.0`.
+4. Create a GitHub Release for `v0.2.0`.
 5. Upload `dist/CodexPacekeeper.app.zip` as the release asset.
 6. Verify that this URL downloads the asset:
 
@@ -56,7 +56,7 @@ https://github.com/97Wobbler/codex-pacekeeper/releases/latest/download/CodexPace
 curl -fsSL https://raw.githubusercontent.com/97Wobbler/codex-pacekeeper/main/install.sh | bash
 ```
 
-## Known v0.1.0 Distribution Limits
+## Known Distribution Limits
 
 - The app is unsigned, so macOS Gatekeeper warnings are expected.
 - The installer replaces `~/Applications/CodexPacekeeper.app`.

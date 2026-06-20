@@ -6,15 +6,17 @@ The product direction and MVP scope live in [docs/codex-pacekeeper-prd.md](docs/
 
 ## Current Status
 
-Current MVP baseline: `v0.1.0`.
+Current release target: `v0.2.0`.
 
 Functional SwiftUI app:
 
 - Swift Package Manager project
 - macOS `MenuBarExtra` shell
-- floating HUD shell using `NSPanel`
+- switchable notch island and floating HUD shells using `NSPanel`
+- drag docking between notch island and floating HUD modes
 - `~/.codex/auth.json` access token reading
 - ChatGPT WHAM usage API polling
+- optional Claude Code usage display from statusline `rate_limits`
 - pace calculation model for actual usage, recommended pace, delta, and status
 - loading, stale, error, and paused states
 - Threshold/Redline notification logic for bundled app runs
@@ -48,6 +50,27 @@ Run fixed visual QA scenarios without auth/API polling:
 swift run CodexPacekeeper -- --demo-huds
 ```
 
+## Claude Code Usage
+
+Claude usage is intentionally cache-backed. Pacekeeper does not read Claude
+OAuth tokens or call Anthropic's internal usage endpoint. Instead, Claude Code
+2.1.80 or newer can pass `rate_limits` to a custom statusline script, and the
+bridge script stores only usage percentages and reset times:
+
+```sh
+scripts/claude-statusline-bridge.sh
+```
+
+The active Claude statusline should pipe its stdin JSON to that script. The
+cache is written to:
+
+```text
+~/Library/Application Support/Codex Pacekeeper/claude-rate-limits.json
+```
+
+Claude appears in the HUD when that cache exists. Old or post-reset cache data
+is shown as stale rather than refreshed by Pacekeeper.
+
 ## MVP Direction
 
 Remaining MVP work:
@@ -57,7 +80,7 @@ Remaining MVP work:
 
 ## Distribution
 
-The v0.1.0 MVP should be distributed through GitHub Releases as
+Codex Pacekeeper should be distributed through GitHub Releases as
 `CodexPacekeeper.app.zip`.
 
 Create the release archive locally:
