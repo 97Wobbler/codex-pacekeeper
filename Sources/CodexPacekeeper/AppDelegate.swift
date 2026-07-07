@@ -104,6 +104,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             return
         }
 
+        reconcileClaudeDirectAccessAuthorization()
         createHUD()
         NotificationCenter.default.addObserver(
             self,
@@ -177,6 +178,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
                 preservingExistingProviders: true
             )
         }
+    }
+
+    func forgetClaudeDirectAccess() {
+        do {
+            try pacekeeperClaudeCredentialStore.deleteCredential()
+            NSLog("Codex Pacekeeper Claude direct access forgotten")
+        } catch {
+            NSLog("Codex Pacekeeper Claude direct access forget failed: \(friendlyMessage(for: error))")
+        }
+
+        cachedClaudeOAuthCredential = nil
+        lastClaudeDirectFallbackAttemptAt = nil
+        lastClaudeDirectFallbackSnapshot = nil
+        setClaudeDirectAccessAuthorized(false)
+        refreshUsage()
     }
 
     func setPaused(_ isPaused: Bool) {
@@ -279,6 +295,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     private func setClaudeDirectAccessAuthorized(_ isAuthorized: Bool) {
         claudeDirectAccessAuthorized = isAuthorized
         UserDefaults.standard.set(isAuthorized, forKey: ClaudeUsageSourceMode.directAccessAuthorizedDefaultsKey)
+    }
+
+    private func reconcileClaudeDirectAccessAuthorization() {
+        guard claudeDirectAccessAuthorized else {
+            return
+        }
+
+        do {
+            cachedClaudeOAuthCredential = try pacekeeperClaudeCredentialStore.oauthCredential(promptPolicy: .disallow)
+        } catch {
+            cachedClaudeOAuthCredential = nil
+            setClaudeDirectAccessAuthorized(false)
+            NSLog(
+                "Codex Pacekeeper Claude direct access authorization reset: imported credential unavailable without prompting"
+            )
+        }
     }
 
     private func startPolling() {
@@ -556,15 +588,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         if let error = error as? ClaudeAuthTokenStoreError {
             switch error {
             case .credentialsMissing:
-                return "Claude Code cache is stale; direct fallback credentials not found"
+                return "Claude Code cache is stale; direct access not authorized"
             case .unreadableCredentials:
-                return "Claude Code cache is stale; direct fallback credentials unreadable"
+                return "Claude Code cache is stale; direct access credentials unreadable"
             case .accessTokenMissing:
-                return "Claude Code cache is stale; direct fallback access token not found"
+                return "Claude Code cache is stale; direct access token not found"
             case .refreshTokenMissing:
-                return "Claude Code cache is stale; direct fallback refresh token not found"
+                return "Claude Code cache is stale; direct access refresh token not found"
             case .credentialsNotWritable:
-                return "Claude Code cache is stale; direct fallback credentials not writable"
+                return "Claude Code cache is stale; direct access credentials not writable"
             }
         }
 

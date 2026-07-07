@@ -77,11 +77,13 @@ By default, Pacekeeper does not read Claude OAuth credentials or call Anthropic'
 internal usage endpoint. The menu includes an opt-in `Statusline + Experimental
 Fallback` mode that can try a direct lookup when the statusline cache is stale or
 missing. Direct access must be explicitly authorized from the menu before
-automatic fallback polling starts. That fallback reads Claude Code OAuth
-credentials from the macOS Keychain, falling back to the legacy local credentials
-file, refreshes expired access tokens when possible, and calls an internal
-endpoint. It is off by default and may stop working without notice. Direct
-fallback results do not overwrite the statusline cache.
+automatic fallback polling starts. Authorization imports only the Claude OAuth
+fields from Claude Code credentials into a Pacekeeper-owned Keychain item. After
+that, automatic fallback polling reads and refreshes only the Pacekeeper-owned
+copy; it does not keep touching or updating Claude Code's original Keychain
+credential. The menu can forget the imported credential without deleting Claude
+Code's credential. The fallback is off by default and may stop working without
+notice. Direct fallback results do not overwrite the statusline cache.
 
 ## MVP Direction
 

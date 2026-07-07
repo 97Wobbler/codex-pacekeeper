@@ -42,6 +42,12 @@ struct CodexPacekeeperApp: App {
                     appDelegate.authorizeClaudeDirectAccess()
                 }
 
+                if claudeDirectAccessAuthorized {
+                    Button("Forget Claude Direct Access") {
+                        appDelegate.forgetClaudeDirectAccess()
+                    }
+                }
+
                 Button("Refresh Claude Direct") {
                     appDelegate.refreshClaudeDirectUsage()
                 }

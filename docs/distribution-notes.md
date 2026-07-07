@@ -8,9 +8,10 @@ statusline-backed cache is stale or missing.
 Included in this release:
 
 - Claude usage source menu with `Statusline Only` and `Statusline + Experimental Fallback`
-- direct fallback reads Claude Code OAuth credentials from Keychain or legacy credentials file
+- direct fallback imports Claude Code OAuth credentials into a Pacekeeper-owned Keychain item
 - direct fallback requires explicit menu authorization before automatic polling
-- direct fallback refreshes expired Claude OAuth access tokens when possible
+- automatic fallback polling reads and refreshes only Pacekeeper's imported credential copy
+- direct fallback can forget Pacekeeper's imported credential without deleting Claude Code credentials
 - direct fallback throttled to avoid repeated calls to internal OAuth and usage endpoints
 - fallback keeps stale cache values visible when direct lookup is unavailable
 - package defaults bumped to version `0.2.1` build `3`
