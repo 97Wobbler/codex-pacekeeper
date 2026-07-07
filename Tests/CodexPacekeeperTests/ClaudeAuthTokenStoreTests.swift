@@ -146,6 +146,139 @@ final class ClaudeAuthTokenStoreTests: XCTestCase {
         XCTAssertEqual(updatedCredential.rateLimitTier, "default_claude_max_5x")
     }
 
+    func testPacekeeperStoreSavesOnlyClaudeOauthCredentialFields() throws {
+        let credentialsURL = try writeCredentials("{}")
+        defer { try? FileManager.default.removeItem(at: credentialsURL.deletingLastPathComponent()) }
+        let sourceStore = ClaudeAuthTokenStore(
+            credentialsFileURL: credentialsURL,
+            keychainCredentialData: {
+                Data("""
+                {
+                  "claudeAiOauth": {
+                    "accessToken": "source-token",
+                    "refreshToken": "source-refresh",
+                    "expiresAt": 5000000,
+                    "scopes": ["user:profile", "user:sessions:claude_code"],
+                    "subscriptionType": "max",
+                    "rateLimitTier": "default_claude_max_5x"
+                  },
+                  "pluginSecrets": {
+                    "slack": {
+                      "token": "do-not-copy"
+                    }
+                  }
+                }
+                """.utf8)
+            }
+        )
+        let sourceCredential = try sourceStore.oauthCredential()
+        var storedData: Data?
+        let pacekeeperStore = PacekeeperClaudeCredentialStore(
+            keychainCredentialData: { _, _ in storedData },
+            writeKeychainCredentialData: { data, _ in storedData = data },
+            deleteKeychainCredentialData: { _ in storedData = nil }
+        )
+
+        let storedCredential = try pacekeeperStore.saveCredential(sourceCredential)
+
+        XCTAssertEqual(storedCredential.accessToken, "source-token")
+        XCTAssertEqual(storedCredential.refreshToken, "source-refresh")
+        let storedRoot = try XCTUnwrap(JSONSerialization.jsonObject(with: try XCTUnwrap(storedData)) as? [String: Any])
+        XCTAssertNil(storedRoot["pluginSecrets"])
+        let oauth = try XCTUnwrap(storedRoot["claudeAiOauth"] as? [String: Any])
+        XCTAssertEqual(oauth["accessToken"] as? String, "source-token")
+        XCTAssertEqual(oauth["refreshToken"] as? String, "source-refresh")
+        XCTAssertEqual(oauth["subscriptionType"] as? String, "max")
+        XCTAssertEqual(oauth["rateLimitTier"] as? String, "default_claude_max_5x")
+    }
+
+    func testPacekeeperStoreReadsWithPromptPolicy() throws {
+        var observedPromptPolicy: ClaudeKeychainPromptPolicy?
+        let store = PacekeeperClaudeCredentialStore(
+            serviceName: "test-service",
+            keychainCredentialData: { serviceName, promptPolicy in
+                XCTAssertEqual(serviceName, "test-service")
+                observedPromptPolicy = promptPolicy
+                return Data("""
+                {
+                  "claudeAiOauth": {
+                    "accessToken": "stored-token"
+                  }
+                }
+                """.utf8)
+            },
+            writeKeychainCredentialData: { _, _ in },
+            deleteKeychainCredentialData: { _ in }
+        )
+
+        let credential = try store.oauthCredential(promptPolicy: .disallow)
+
+        XCTAssertEqual(credential.accessToken, "stored-token")
+        XCTAssertEqual(observedPromptPolicy, .disallow)
+    }
+
+    func testPacekeeperStoreUpdatesAndDeletesImportedCredential() throws {
+        let credentialsURL = try writeCredentials("{}")
+        defer { try? FileManager.default.removeItem(at: credentialsURL.deletingLastPathComponent()) }
+        let sourceStore = ClaudeAuthTokenStore(
+            credentialsFileURL: credentialsURL,
+            keychainCredentialData: {
+                Data("""
+                {
+                  "claudeAiOauth": {
+                    "accessToken": "old-token",
+                    "refreshToken": "old-refresh",
+                    "expiresAt": 2000000,
+                    "scopes": ["user:profile"],
+                    "subscriptionType": "max"
+                  }
+                }
+                """.utf8)
+            }
+        )
+        let sourceCredential = try sourceStore.oauthCredential()
+        var storedData: Data?
+        var deletedServiceName: String?
+        let pacekeeperStore = PacekeeperClaudeCredentialStore(
+            serviceName: "test-service",
+            keychainCredentialData: { _, _ in storedData },
+            writeKeychainCredentialData: { data, serviceName in
+                XCTAssertEqual(serviceName, "test-service")
+                storedData = data
+            },
+            deleteKeychainCredentialData: { serviceName in
+                deletedServiceName = serviceName
+                storedData = nil
+            }
+        )
+
+        let importedCredential = try pacekeeperStore.saveCredential(sourceCredential)
+        let updatedCredential = try pacekeeperStore.saveRefreshResult(
+            ClaudeOAuthRefreshResult(
+                accessToken: "new-token",
+                refreshToken: nil,
+                expiresAt: Date(timeIntervalSince1970: 9_000),
+                scopes: ["user:profile", "user:inference"]
+            ),
+            for: importedCredential
+        )
+        let readCredential = try pacekeeperStore.oauthCredential(promptPolicy: .disallow)
+
+        XCTAssertEqual(updatedCredential.accessToken, "new-token")
+        XCTAssertEqual(updatedCredential.refreshToken, "old-refresh")
+        XCTAssertEqual(readCredential.accessToken, "new-token")
+        XCTAssertEqual(readCredential.expiresAt, Date(timeIntervalSince1970: 9_000))
+        XCTAssertEqual(readCredential.scopes, ["user:profile", "user:inference"])
+        XCTAssertEqual(readCredential.subscriptionType, "max")
+
+        try pacekeeperStore.deleteCredential()
+
+        XCTAssertEqual(deletedServiceName, "test-service")
+        XCTAssertThrowsError(try pacekeeperStore.oauthCredential()) { error in
+            XCTAssertEqual(error as? ClaudeAuthTokenStoreError, .credentialsMissing)
+        }
+    }
+
     func testMissingAccessTokenThrows() throws {
         let credentialsURL = try writeCredentials("{}")
         defer { try? FileManager.default.removeItem(at: credentialsURL.deletingLastPathComponent()) }

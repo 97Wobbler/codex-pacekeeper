@@ -2,6 +2,9 @@ import Foundation
 #if canImport(CryptoKit)
 import CryptoKit
 #endif
+#if canImport(LocalAuthentication)
+import LocalAuthentication
+#endif
 #if canImport(Security)
 import Security
 #endif
@@ -29,6 +32,11 @@ public enum ClaudeAuthTokenStoreError: Error, LocalizedError, Equatable {
     }
 }
 
+public enum ClaudeKeychainPromptPolicy: Equatable {
+    case allow
+    case disallow
+}
+
 public struct ClaudeOAuthCredential: Equatable {
     public let accessToken: String
     public let refreshToken: String?
@@ -38,6 +46,10 @@ public struct ClaudeOAuthCredential: Equatable {
     public let rateLimitTier: String?
 
     fileprivate let record: ClaudeCredentialRecord
+
+    fileprivate var storageRoot: [String: Any] {
+        storageRoot()
+    }
 
     public func isExpired(at now: Date = Date(), leeway: TimeInterval = 60) -> Bool {
         guard let expiresAt else {
@@ -55,11 +67,41 @@ public struct ClaudeOAuthCredential: Equatable {
             && lhs.subscriptionType == rhs.subscriptionType
             && lhs.rateLimitTier == rhs.rateLimitTier
     }
+
+    fileprivate func storageRoot(
+        accessToken: String? = nil,
+        refreshToken: String? = nil,
+        expiresAt: Date? = nil,
+        scopes: [String]? = nil
+    ) -> [String: Any] {
+        var oauth: [String: Any] = [
+            "accessToken": accessToken ?? self.accessToken,
+            "scopes": scopes ?? self.scopes
+        ]
+
+        if let refreshToken = refreshToken ?? self.refreshToken {
+            oauth["refreshToken"] = refreshToken
+        }
+
+        if let expiresAt = expiresAt ?? self.expiresAt {
+            oauth["expiresAt"] = Int(expiresAt.timeIntervalSince1970 * 1_000)
+        }
+
+        if let subscriptionType {
+            oauth["subscriptionType"] = subscriptionType
+        }
+
+        if let rateLimitTier {
+            oauth["rateLimitTier"] = rateLimitTier
+        }
+
+        return ["claudeAiOauth": oauth]
+    }
 }
 
 public final class ClaudeAuthTokenStore {
     private let credentialsFileURL: URL
-    private let keychainCredentialRecord: () throws -> ClaudeCredentialRecord?
+    private let keychainCredentialRecord: (ClaudeKeychainPromptPolicy) throws -> ClaudeCredentialRecord?
 
     public convenience init(
         credentialsFileURL: URL = FileManager.default.homeDirectoryForCurrentUser
@@ -67,7 +109,9 @@ public final class ClaudeAuthTokenStore {
     ) {
         self.init(
             credentialsFileURL: credentialsFileURL,
-            keychainCredentialRecord: { try Self.defaultKeychainCredentialRecord() }
+            keychainCredentialRecord: { promptPolicy in
+                try Self.defaultKeychainCredentialRecord(promptPolicy: promptPolicy)
+            }
         )
     }
 
@@ -76,7 +120,7 @@ public final class ClaudeAuthTokenStore {
         keychainCredentialData: @escaping () throws -> Data?
     ) {
         self.credentialsFileURL = credentialsFileURL
-        self.keychainCredentialRecord = {
+        self.keychainCredentialRecord = { _ in
             guard let data = try keychainCredentialData() else {
                 return nil
             }
@@ -87,7 +131,7 @@ public final class ClaudeAuthTokenStore {
 
     private init(
         credentialsFileURL: URL,
-        keychainCredentialRecord: @escaping () throws -> ClaudeCredentialRecord?
+        keychainCredentialRecord: @escaping (ClaudeKeychainPromptPolicy) throws -> ClaudeCredentialRecord?
     ) {
         self.credentialsFileURL = credentialsFileURL
         self.keychainCredentialRecord = keychainCredentialRecord
@@ -97,8 +141,10 @@ public final class ClaudeAuthTokenStore {
         try oauthCredential().accessToken
     }
 
-    public func oauthCredential() throws -> ClaudeOAuthCredential {
-        let record = try credentialRecord()
+    public func oauthCredential(
+        promptPolicy: ClaudeKeychainPromptPolicy = .allow
+    ) throws -> ClaudeOAuthCredential {
+        let record = try credentialRecord(promptPolicy: promptPolicy)
         guard let credential = Self.oauthCredential(from: record) else {
             throw ClaudeAuthTokenStoreError.accessTokenMissing
         }
@@ -137,12 +183,12 @@ public final class ClaudeAuthTokenStore {
         return updatedCredential
     }
 
-    private func credentialRecord() throws -> ClaudeCredentialRecord {
+    private func credentialRecord(promptPolicy: ClaudeKeychainPromptPolicy) throws -> ClaudeCredentialRecord {
         var foundCredentials = false
         var unreadableCredentials = false
 
         do {
-            if let record = try keychainCredentialRecord() {
+            if let record = try keychainCredentialRecord(promptPolicy) {
                 foundCredentials = true
                 return record
             }
@@ -185,9 +231,11 @@ public final class ClaudeAuthTokenStore {
         }
     }
 
-    private static func defaultKeychainCredentialRecord() throws -> ClaudeCredentialRecord? {
+    private static func defaultKeychainCredentialRecord(
+        promptPolicy: ClaudeKeychainPromptPolicy
+    ) throws -> ClaudeCredentialRecord? {
         for serviceName in defaultKeychainServiceNames() {
-            if let data = try keychainCredentialData(serviceName: serviceName) {
+            if let data = try keychainCredentialData(serviceName: serviceName, promptPolicy: promptPolicy) {
                 return try credentialRecord(from: data, source: .keychain(serviceName: serviceName))
             }
         }
@@ -226,15 +274,27 @@ public final class ClaudeAuthTokenStore {
         #endif
     }
 
-    private static func keychainCredentialData(serviceName: String) throws -> Data? {
+    fileprivate static func keychainCredentialData(
+        serviceName: String,
+        promptPolicy: ClaudeKeychainPromptPolicy = .allow
+    ) throws -> Data? {
         #if canImport(Security)
-        let query: [CFString: Any] = [
+        var query: [CFString: Any] = [
             kSecClass: kSecClassGenericPassword,
             kSecAttrAccount: accountName(),
             kSecAttrService: serviceName,
             kSecMatchLimit: kSecMatchLimitOne,
             kSecReturnData: true
         ]
+
+        #if canImport(LocalAuthentication)
+        let authenticationContext = LAContext()
+        if promptPolicy == .disallow {
+            authenticationContext.interactionNotAllowed = true
+            query[kSecUseAuthenticationContext] = authenticationContext
+        }
+        #endif
+
         var result: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
 
@@ -255,7 +315,7 @@ public final class ClaudeAuthTokenStore {
         #endif
     }
 
-    private static func writeKeychainCredentialData(_ data: Data, serviceName: String) throws {
+    fileprivate static func writeKeychainCredentialData(_ data: Data, serviceName: String) throws {
         #if canImport(Security)
         let query: [CFString: Any] = [
             kSecClass: kSecClassGenericPassword,
@@ -286,7 +346,27 @@ public final class ClaudeAuthTokenStore {
         #endif
     }
 
-    private static func credentialRecord(from data: Data, source: ClaudeCredentialSource) throws -> ClaudeCredentialRecord {
+    fileprivate static func deleteKeychainCredentialData(serviceName: String) throws {
+        #if canImport(Security)
+        let query: [CFString: Any] = [
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrAccount: accountName(),
+            kSecAttrService: serviceName
+        ]
+        let status = SecItemDelete(query as CFDictionary)
+
+        switch status {
+        case errSecSuccess, errSecItemNotFound:
+            return
+        default:
+            throw ClaudeAuthTokenStoreError.credentialsNotWritable
+        }
+        #else
+        throw ClaudeAuthTokenStoreError.credentialsNotWritable
+        #endif
+    }
+
+    fileprivate static func credentialRecord(from data: Data, source: ClaudeCredentialSource) throws -> ClaudeCredentialRecord {
         let credentialsData = decodedHexData(from: data) ?? data
 
         guard let root = try? JSONSerialization.jsonObject(with: credentialsData) as? [String: Any] else {
@@ -296,7 +376,7 @@ public final class ClaudeAuthTokenStore {
         return ClaudeCredentialRecord(root: root, source: source)
     }
 
-    private static func serializedCredentials(from root: [String: Any]) throws -> Data {
+    fileprivate static func serializedCredentials(from root: [String: Any]) throws -> Data {
         guard JSONSerialization.isValidJSONObject(root) else {
             throw ClaudeAuthTokenStoreError.credentialsNotWritable
         }
@@ -304,7 +384,7 @@ public final class ClaudeAuthTokenStore {
         return try JSONSerialization.data(withJSONObject: root, options: [.sortedKeys])
     }
 
-    private static func oauthCredential(from record: ClaudeCredentialRecord) -> ClaudeOAuthCredential? {
+    fileprivate static func oauthCredential(from record: ClaudeCredentialRecord) -> ClaudeOAuthCredential? {
         let root = record.root
         let oauth = root["claudeAiOauth"] as? [String: Any] ?? root
 
@@ -429,6 +509,102 @@ public final class ClaudeAuthTokenStore {
         (48...57).contains(scalar.value)
             || (65...70).contains(scalar.value)
             || (97...102).contains(scalar.value)
+    }
+}
+
+public final class PacekeeperClaudeCredentialStore {
+    public static let defaultServiceName = "Codex Pacekeeper Claude Credentials"
+
+    private let serviceName: String
+    private let keychainCredentialData: (String, ClaudeKeychainPromptPolicy) throws -> Data?
+    private let writeKeychainCredentialData: (Data, String) throws -> Void
+    private let deleteKeychainCredentialData: (String) throws -> Void
+
+    public convenience init(serviceName: String = PacekeeperClaudeCredentialStore.defaultServiceName) {
+        self.init(
+            serviceName: serviceName,
+            keychainCredentialData: { serviceName, promptPolicy in
+                try ClaudeAuthTokenStore.keychainCredentialData(
+                    serviceName: serviceName,
+                    promptPolicy: promptPolicy
+                )
+            },
+            writeKeychainCredentialData: { data, serviceName in
+                try ClaudeAuthTokenStore.writeKeychainCredentialData(data, serviceName: serviceName)
+            },
+            deleteKeychainCredentialData: { serviceName in
+                try ClaudeAuthTokenStore.deleteKeychainCredentialData(serviceName: serviceName)
+            }
+        )
+    }
+
+    init(
+        serviceName: String = PacekeeperClaudeCredentialStore.defaultServiceName,
+        keychainCredentialData: @escaping (String, ClaudeKeychainPromptPolicy) throws -> Data?,
+        writeKeychainCredentialData: @escaping (Data, String) throws -> Void,
+        deleteKeychainCredentialData: @escaping (String) throws -> Void
+    ) {
+        self.serviceName = serviceName
+        self.keychainCredentialData = keychainCredentialData
+        self.writeKeychainCredentialData = writeKeychainCredentialData
+        self.deleteKeychainCredentialData = deleteKeychainCredentialData
+    }
+
+    public func oauthCredential(
+        promptPolicy: ClaudeKeychainPromptPolicy = .allow
+    ) throws -> ClaudeOAuthCredential {
+        guard let data = try keychainCredentialData(serviceName, promptPolicy) else {
+            throw ClaudeAuthTokenStoreError.credentialsMissing
+        }
+
+        let record = try ClaudeAuthTokenStore.credentialRecord(
+            from: data,
+            source: .keychain(serviceName: serviceName)
+        )
+
+        guard let credential = ClaudeAuthTokenStore.oauthCredential(from: record) else {
+            throw ClaudeAuthTokenStoreError.accessTokenMissing
+        }
+
+        return credential
+    }
+
+    public func saveCredential(_ credential: ClaudeOAuthCredential) throws -> ClaudeOAuthCredential {
+        try saveRoot(credential.storageRoot)
+    }
+
+    public func saveRefreshResult(
+        _ refreshResult: ClaudeOAuthRefreshResult,
+        for credential: ClaudeOAuthCredential
+    ) throws -> ClaudeOAuthCredential {
+        let root = credential.storageRoot(
+            accessToken: refreshResult.accessToken,
+            refreshToken: refreshResult.refreshToken ?? credential.refreshToken,
+            expiresAt: refreshResult.expiresAt,
+            scopes: refreshResult.scopes
+        )
+
+        return try saveRoot(root)
+    }
+
+    public func deleteCredential() throws {
+        try deleteKeychainCredentialData(serviceName)
+    }
+
+    private func saveRoot(_ root: [String: Any]) throws -> ClaudeOAuthCredential {
+        let data = try ClaudeAuthTokenStore.serializedCredentials(from: root)
+        try writeKeychainCredentialData(data, serviceName)
+
+        let record = try ClaudeAuthTokenStore.credentialRecord(
+            from: data,
+            source: .keychain(serviceName: serviceName)
+        )
+
+        guard let credential = ClaudeAuthTokenStore.oauthCredential(from: record) else {
+            throw ClaudeAuthTokenStoreError.accessTokenMissing
+        }
+
+        return credential
     }
 }
 
