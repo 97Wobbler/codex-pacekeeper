@@ -57,6 +57,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     private let codexUsageClient = WhamUsageClient()
     private let claudeRateLimitCacheStore = ClaudeRateLimitCacheStore()
     private let claudeAuthTokenStore = ClaudeAuthTokenStore()
+    private let pacekeeperClaudeCredentialStore = PacekeeperClaudeCredentialStore()
     private let claudeOAuthRefreshClient = ClaudeOAuthRefreshClient()
     private let claudeDirectUsageClient = ClaudeDirectUsageClient()
     private let codexUsageHistoryStore = UsageHistoryStore()
@@ -161,10 +162,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         }
 
         do {
-            let credential = try claudeAuthTokenStore.oauthCredential()
+            let sourceCredential = try claudeAuthTokenStore.oauthCredential(promptPolicy: .allow)
+            let credential = try pacekeeperClaudeCredentialStore.saveCredential(sourceCredential)
             cachedClaudeOAuthCredential = credential
             setClaudeDirectAccessAuthorized(true)
-            NSLog("Codex Pacekeeper Claude direct access authorized")
+            NSLog("Codex Pacekeeper Claude direct access authorized and imported")
             refreshClaudeDirectUsage()
         } catch {
             cachedClaudeOAuthCredential = nil
@@ -306,7 +308,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         let fallbackSnapshot = try? claudeRateLimitCacheStore.snapshot()
         lastClaudeDirectFallbackAttemptAt = nil
 
-        let result = await loadClaudeDirectFallback(fallbackSnapshot: fallbackSnapshot, forceAttempt: true)
+        let result = await loadClaudeDirectFallback(
+            fallbackSnapshot: fallbackSnapshot,
+            forceAttempt: true,
+            promptPolicy: .allow
+        )
         switch result {
         case .success(_, let snapshot):
             NSLog(
@@ -419,7 +425,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
 
     private func loadClaudeDirectFallback(
         fallbackSnapshot: UsageSnapshot?,
-        forceAttempt: Bool = false
+        forceAttempt: Bool = false,
+        promptPolicy: ClaudeKeychainPromptPolicy = .disallow
     ) async -> ProviderLoadResult {
         let now = Date()
 
@@ -438,7 +445,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         lastClaudeDirectFallbackAttemptAt = now
 
         do {
-            let snapshot = try await loadClaudeDirectSnapshot(now: now)
+            let snapshot = try await loadClaudeDirectSnapshot(now: now, promptPolicy: promptPolicy)
             lastClaudeDirectFallbackSnapshot = snapshot
             return claudeSuccess(snapshot)
         } catch {
@@ -461,8 +468,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         }
     }
 
-    private func loadClaudeDirectSnapshot(now: Date) async throws -> UsageSnapshot {
-        var credential = try cachedOrStoredClaudeOAuthCredential()
+    private func loadClaudeDirectSnapshot(
+        now: Date,
+        promptPolicy: ClaudeKeychainPromptPolicy
+    ) async throws -> UsageSnapshot {
+        var credential = try cachedOrStoredClaudeOAuthCredential(promptPolicy: promptPolicy)
 
         if credential.isExpired(at: now) {
             credential = try await refreshClaudeOAuthCredential(credential, now: now)
@@ -476,12 +486,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         }
     }
 
-    private func cachedOrStoredClaudeOAuthCredential() throws -> ClaudeOAuthCredential {
+    private func cachedOrStoredClaudeOAuthCredential(
+        promptPolicy: ClaudeKeychainPromptPolicy
+    ) throws -> ClaudeOAuthCredential {
         if let credential = cachedClaudeOAuthCredential {
             return credential
         }
 
-        let credential = try claudeAuthTokenStore.oauthCredential()
+        let credential = try pacekeeperClaudeCredentialStore.oauthCredential(promptPolicy: promptPolicy)
         cachedClaudeOAuthCredential = credential
         return credential
     }
@@ -495,7 +507,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
         }
 
         let refreshResult = try await claudeOAuthRefreshClient.refreshToken(refreshToken, now: now)
-        let refreshedCredential = try claudeAuthTokenStore.saveRefreshResult(refreshResult, for: credential)
+        let refreshedCredential = try pacekeeperClaudeCredentialStore.saveRefreshResult(refreshResult, for: credential)
         cachedClaudeOAuthCredential = refreshedCredential
         return refreshedCredential
     }
