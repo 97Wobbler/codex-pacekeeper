@@ -1,5 +1,19 @@
 # Distribution Notes
 
+## v0.2.3 Release
+
+`v0.2.3` makes Codex usage polling resilient to WHAM rate-limit schema changes
+instead of requiring every response to contain a fixed five-hour and weekly pair.
+
+Included in this release:
+
+- accepts one or two usable Codex rate-limit windows
+- derives window labels from the duration reported by WHAM
+- keeps legacy five-hour plus weekly responses working
+- renders and notifies only the windows actually returned by the service
+- tolerates a missing or incomplete companion window without dropping valid usage data
+- package defaults bumped to version `0.2.3` build `5`
+
 ## v0.2.2 Release
 
 `v0.2.2` hardens Claude direct fallback credential handling so Pacekeeper does
@@ -126,19 +140,19 @@ Implemented near-term workflow:
 2. Build the release binary with `swift build -c release`.
 3. Create a minimal unsigned `.app` bundle around the executable.
 4. Zip `CodexPacekeeper.app` into `dist/CodexPacekeeper.app.zip`.
-5. Upload the zip to a GitHub Release tagged for the current version, such as `v0.2.2`.
+5. Upload the zip to a GitHub Release tagged for the current version, such as `v0.2.3`.
 6. Install with `install.sh`.
 
 Release metadata defaults:
 
-- Version: `0.2.2`
-- Build number: `4`
+- Version: `0.2.3`
+- Build number: `5`
 - Bundle ID: `dev.whchoi.codex-pacekeeper`
 
 These can be overridden for packaging:
 
 ```sh
-VERSION=0.2.2 BUILD_NUMBER=4 BUNDLE_ID=dev.whchoi.codex-pacekeeper scripts/package-release.sh
+VERSION=0.2.3 BUILD_NUMBER=5 BUNDLE_ID=dev.whchoi.codex-pacekeeper scripts/package-release.sh
 ```
 
 Later:

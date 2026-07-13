@@ -6,7 +6,7 @@ The product direction and MVP scope live in [docs/codex-pacekeeper-prd.md](docs/
 
 ## Current Status
 
-Current release target: `v0.2.2`.
+Current release target: `v0.2.3`.
 
 Functional SwiftUI app:
 
