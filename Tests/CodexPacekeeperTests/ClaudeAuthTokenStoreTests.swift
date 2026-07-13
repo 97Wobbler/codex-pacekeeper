@@ -64,7 +64,7 @@ final class ClaudeAuthTokenStoreTests: XCTestCase {
                   "claudeAiOauth": {
                     "accessToken": "keychain-token",
                     "refreshToken": "refresh-token",
-                    "expiresAt": 2000000,
+                    "expiresAt": 1800000000000,
                     "scopes": ["user:profile", "user:inference"],
                     "subscriptionType": "max",
                     "rateLimitTier": "default_claude_max_5x"
@@ -78,11 +78,11 @@ final class ClaudeAuthTokenStoreTests: XCTestCase {
 
         XCTAssertEqual(credential.accessToken, "keychain-token")
         XCTAssertEqual(credential.refreshToken, "refresh-token")
-        XCTAssertEqual(credential.expiresAt, Date(timeIntervalSince1970: 2_000))
+        XCTAssertEqual(credential.expiresAt, Date(timeIntervalSince1970: 1_800_000_000))
         XCTAssertEqual(credential.scopes, ["user:profile", "user:inference"])
         XCTAssertEqual(credential.subscriptionType, "max")
         XCTAssertEqual(credential.rateLimitTier, "default_claude_max_5x")
-        XCTAssertTrue(credential.isExpired(at: Date(timeIntervalSince1970: 2_001), leeway: 0))
+        XCTAssertTrue(credential.isExpired(at: Date(timeIntervalSince1970: 1_800_000_001), leeway: 0))
     }
 
     func testReadsHexEncodedKeychainCredential() throws {
@@ -117,7 +117,7 @@ final class ClaudeAuthTokenStoreTests: XCTestCase {
                   "claudeAiOauth": {
                     "accessToken": "old-token",
                     "refreshToken": "old-refresh",
-                    "expiresAt": 2000000,
+                    "expiresAt": 1800000000000,
                     "scopes": ["user:profile"],
                     "subscriptionType": "max",
                     "rateLimitTier": "default_claude_max_5x"
@@ -132,7 +132,7 @@ final class ClaudeAuthTokenStoreTests: XCTestCase {
             ClaudeOAuthRefreshResult(
                 accessToken: "new-token",
                 refreshToken: "new-refresh",
-                expiresAt: Date(timeIntervalSince1970: 5_000),
+                expiresAt: Date(timeIntervalSince1970: 1_900_000_000),
                 scopes: ["user:profile", "user:inference"]
             ),
             for: credential
@@ -140,7 +140,7 @@ final class ClaudeAuthTokenStoreTests: XCTestCase {
 
         XCTAssertEqual(updatedCredential.accessToken, "new-token")
         XCTAssertEqual(updatedCredential.refreshToken, "new-refresh")
-        XCTAssertEqual(updatedCredential.expiresAt, Date(timeIntervalSince1970: 5_000))
+        XCTAssertEqual(updatedCredential.expiresAt, Date(timeIntervalSince1970: 1_900_000_000))
         XCTAssertEqual(updatedCredential.scopes, ["user:profile", "user:inference"])
         XCTAssertEqual(updatedCredential.subscriptionType, "max")
         XCTAssertEqual(updatedCredential.rateLimitTier, "default_claude_max_5x")
@@ -157,7 +157,7 @@ final class ClaudeAuthTokenStoreTests: XCTestCase {
                   "claudeAiOauth": {
                     "accessToken": "source-token",
                     "refreshToken": "source-refresh",
-                    "expiresAt": 5000000,
+                    "expiresAt": 1800000000000,
                     "scopes": ["user:profile", "user:sessions:claude_code"],
                     "subscriptionType": "max",
                     "rateLimitTier": "default_claude_max_5x"
@@ -228,7 +228,7 @@ final class ClaudeAuthTokenStoreTests: XCTestCase {
                   "claudeAiOauth": {
                     "accessToken": "old-token",
                     "refreshToken": "old-refresh",
-                    "expiresAt": 2000000,
+                    "expiresAt": 1800000000000,
                     "scopes": ["user:profile"],
                     "subscriptionType": "max"
                   }
@@ -257,7 +257,7 @@ final class ClaudeAuthTokenStoreTests: XCTestCase {
             ClaudeOAuthRefreshResult(
                 accessToken: "new-token",
                 refreshToken: nil,
-                expiresAt: Date(timeIntervalSince1970: 9_000),
+                expiresAt: Date(timeIntervalSince1970: 1_900_000_000),
                 scopes: ["user:profile", "user:inference"]
             ),
             for: importedCredential
@@ -267,7 +267,7 @@ final class ClaudeAuthTokenStoreTests: XCTestCase {
         XCTAssertEqual(updatedCredential.accessToken, "new-token")
         XCTAssertEqual(updatedCredential.refreshToken, "old-refresh")
         XCTAssertEqual(readCredential.accessToken, "new-token")
-        XCTAssertEqual(readCredential.expiresAt, Date(timeIntervalSince1970: 9_000))
+        XCTAssertEqual(readCredential.expiresAt, Date(timeIntervalSince1970: 1_900_000_000))
         XCTAssertEqual(readCredential.scopes, ["user:profile", "user:inference"])
         XCTAssertEqual(readCredential.subscriptionType, "max")
 

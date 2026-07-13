@@ -49,10 +49,17 @@ public final class WhamUsageClient {
         }
 
         let usageResponse = try decoder.decode(WhamUsageResponse.self, from: data)
+        let readings = usageResponse.rateLimit.windows
+            .compactMap { $0.usageWindow(now: now) }
+            .sorted { $0.limitWindowSeconds < $1.limitWindowSeconds }
+            .map { $0.pace(at: now) }
 
-        return try UsageSnapshot(
-            primary: usageResponse.rateLimit.primaryWindow.usageWindow(label: "5h", now: now).pace(at: now),
-            weekly: usageResponse.rateLimit.secondaryWindow.usageWindow(label: "week", now: now).pace(at: now),
+        guard !readings.isEmpty else {
+            throw WhamUsageClientError.missingWindow("usage")
+        }
+
+        return UsageSnapshot(
+            readings: readings,
             lastRefreshedAt: now,
             state: .fresh,
             message: nil
@@ -69,18 +76,28 @@ private struct WhamUsageResponse: Decodable {
 }
 
 private struct WhamRateLimit: Decodable {
-    let primaryWindow: WhamUsageWindow
-    let secondaryWindow: WhamUsageWindow
+    let primaryWindow: WhamUsageWindow?
+    let secondaryWindow: WhamUsageWindow?
+
+    var windows: [WhamUsageWindow] {
+        [primaryWindow, secondaryWindow].compactMap { $0 }
+    }
 
     enum CodingKeys: String, CodingKey {
         case primaryWindow = "primary_window"
         case secondaryWindow = "secondary_window"
     }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        primaryWindow = try? container.decodeIfPresent(WhamUsageWindow.self, forKey: .primaryWindow)
+        secondaryWindow = try? container.decodeIfPresent(WhamUsageWindow.self, forKey: .secondaryWindow)
+    }
 }
 
 private struct WhamUsageWindow: Decodable {
-    let usedPercent: Double
-    let limitWindowSeconds: TimeInterval
+    let usedPercent: Double?
+    let limitWindowSeconds: TimeInterval?
     let resetAt: FlexibleDate?
     let resetAfterSeconds: TimeInterval?
 
@@ -91,15 +108,31 @@ private struct WhamUsageWindow: Decodable {
         case resetAfterSeconds = "reset_after_seconds"
     }
 
-    func usageWindow(label: String, now: Date) throws -> UsageWindow {
+    func usageWindow(now: Date) -> UsageWindow? {
+        guard
+            let usedPercent,
+            usedPercent.isFinite,
+            let limitWindowSeconds,
+            limitWindowSeconds.isFinite,
+            limitWindowSeconds > 0,
+            let windowMinutes = Int(exactly: max(1, (limitWindowSeconds / 60).rounded()))
+        else {
+            return nil
+        }
+
+        let label = Self.windowLabel(minutes: windowMinutes)
         let resetDate: Date
 
         if let resetAt {
             resetDate = resetAt.date
-        } else if let resetAfterSeconds {
+        } else if let resetAfterSeconds, resetAfterSeconds.isFinite {
             resetDate = now.addingTimeInterval(resetAfterSeconds)
         } else {
-            throw WhamUsageClientError.missingWindow(label)
+            return nil
+        }
+
+        guard resetDate.timeIntervalSinceReferenceDate.isFinite else {
+            return nil
         }
 
         return UsageWindow(
@@ -108,5 +141,24 @@ private struct WhamUsageWindow: Decodable {
             resetAt: resetDate,
             limitWindowSeconds: limitWindowSeconds
         )
+    }
+
+    private static func windowLabel(minutes: Int) -> String {
+        switch minutes {
+        case 5 * 60:
+            return "5h"
+        case 7 * 24 * 60:
+            return "week"
+        default:
+            if minutes.isMultiple(of: 24 * 60) {
+                return "\(minutes / (24 * 60))d"
+            }
+
+            if minutes.isMultiple(of: 60) {
+                return "\(minutes / 60)h"
+            }
+
+            return "\(minutes)m"
+        }
     }
 }

@@ -272,8 +272,9 @@ private struct ProviderSummaryView: View {
                         provider: providerSnapshot.provider,
                         recommendation: snapshot.paceRecommendation
                     )
-                    PaceRow(reading: snapshot.primary, now: snapshot.lastRefreshedAt)
-                    PaceRow(reading: snapshot.weekly, now: snapshot.lastRefreshedAt)
+                    ForEach(Array(snapshot.readings.enumerated()), id: \.offset) { _, reading in
+                        PaceRow(reading: reading, now: snapshot.lastRefreshedAt)
+                    }
                 }
                 .opacity(snapshot.staleIndicatorOpacity)
             } else {

@@ -9,8 +9,8 @@ tasks:
     name: "Support dynamic Codex usage windows"
     blocked_by: []
     human_gate: null
-    done: false
-    status: pending
+    done: true
+    status: committed
     estimated_size: S
     spec: |
       Make WHAM primary and secondary windows optional, reject only responses with no usable windows,
@@ -24,14 +24,16 @@ tasks:
       - Sources/CodexPacekeeper/PaceViews.swift
       - Sources/CodexPacekeeper/AppDelegate.swift
       - Tests/CodexPacekeeperTests/WhamUsageClientTests.swift
+      - Tests/CodexPacekeeperTests/PaceModelTests.swift
+      - Tests/CodexPacekeeperTests/ClaudeAuthTokenStoreTests.swift
     verify_checks:
       - "swift test --filter WhamUsageClientTests"
       - "swift test"
       - "scripts/package-release.sh"
       - "Restart dist/CodexPacekeeper.app and confirm a fresh Codex usage sample is recorded"
     lifecycle:
-      started_at: null
-      verified_at: null
-      committed_at: null
-      worker_id: null
-      commit: null
+      started_at: "2026-07-13T20:37:43+09:00"
+      verified_at: "2026-07-13T20:50:30+09:00"
+      committed_at: "2026-07-13T20:50:30+09:00"
+      worker_id: root
+      commit: "task commit"

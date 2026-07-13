@@ -285,6 +285,7 @@ public enum PaceStatus: String, Equatable {
 public struct UsageSnapshot: Equatable {
     public let primary: PaceReading
     public let weekly: PaceReading
+    public let readings: [PaceReading]
     public let lastRefreshedAt: Date
     public let state: UsageSnapshotState
     public let message: String?
@@ -298,8 +299,27 @@ public struct UsageSnapshot: Equatable {
         message: String?,
         trend: UsageTrend? = nil
     ) {
-        self.primary = primary
-        self.weekly = weekly
+        self.init(
+            readings: [primary, weekly],
+            lastRefreshedAt: lastRefreshedAt,
+            state: state,
+            message: message,
+            trend: trend
+        )
+    }
+
+    public init(
+        readings: [PaceReading],
+        lastRefreshedAt: Date,
+        state: UsageSnapshotState,
+        message: String?,
+        trend: UsageTrend? = nil
+    ) {
+        precondition(!readings.isEmpty, "UsageSnapshot requires at least one reading")
+
+        self.primary = readings[0]
+        self.weekly = readings[readings.count - 1]
+        self.readings = readings
         self.lastRefreshedAt = lastRefreshedAt
         self.state = state
         self.message = message
@@ -404,8 +424,7 @@ public struct UsageSnapshot: Equatable {
 
     public func withPaused(_ paused: Bool) -> UsageSnapshot {
         UsageSnapshot(
-            primary: primary.withPaused(paused),
-            weekly: weekly.withPaused(paused),
+            readings: readings.map { $0.withPaused(paused) },
             lastRefreshedAt: lastRefreshedAt,
             state: state,
             message: message,
@@ -415,8 +434,7 @@ public struct UsageSnapshot: Equatable {
 
     public func markingStale(message: String) -> UsageSnapshot {
         UsageSnapshot(
-            primary: primary,
-            weekly: weekly,
+            readings: readings,
             lastRefreshedAt: lastRefreshedAt,
             state: .stale,
             message: message,
@@ -426,8 +444,7 @@ public struct UsageSnapshot: Equatable {
 
     public func withTrend(_ trend: UsageTrend?) -> UsageSnapshot {
         UsageSnapshot(
-            primary: primary,
-            weekly: weekly,
+            readings: readings,
             lastRefreshedAt: lastRefreshedAt,
             state: state,
             message: message,

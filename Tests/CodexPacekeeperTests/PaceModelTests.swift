@@ -113,7 +113,7 @@ final class PaceModelTests: XCTestCase {
         XCTAssertEqual(recommendation.direction, .hold)
     }
 
-    func testRecentTrendCalculatesPercentPointsPerHour() {
+    func testRecentTrendCalculatesPercentPointsPerHour() throws {
         let now = Date(timeIntervalSince1970: 10_000)
         let primaryResetAt = now.addingTimeInterval(5 * 60 * 60)
         let weeklyResetAt = now.addingTimeInterval(7 * 24 * 60 * 60)
@@ -134,15 +134,15 @@ final class PaceModelTests: XCTestCase {
             )
         ]
 
-        let trend = UsageHistoryStore.recentTrend(samples: samples, now: now)
+        let trend = try XCTUnwrap(UsageHistoryStore.recentTrend(samples: samples, now: now))
 
-        XCTAssertEqual(trend?.primaryPercentPointsPerHour, 12, accuracy: 0.0001)
-        XCTAssertEqual(trend?.weeklyPercentPointsPerHour, 2, accuracy: 0.0001)
-        XCTAssertEqual(trend?.sampleCount, 2)
-        XCTAssertEqual(trend?.interval, 30 * 60, accuracy: 0.0001)
+        XCTAssertEqual(trend.primaryPercentPointsPerHour, 12, accuracy: 0.0001)
+        XCTAssertEqual(trend.weeklyPercentPointsPerHour, 2, accuracy: 0.0001)
+        XCTAssertEqual(trend.sampleCount, 2)
+        XCTAssertEqual(trend.interval, 30 * 60, accuracy: 0.0001)
     }
 
-    func testRecentTrendIgnoresSamplesAcrossResetBoundary() {
+    func testRecentTrendIgnoresSamplesAcrossResetBoundary() throws {
         let now = Date(timeIntervalSince1970: 10_000)
         let latestPrimaryResetAt = now.addingTimeInterval(5 * 60 * 60)
         let latestWeeklyResetAt = now.addingTimeInterval(7 * 24 * 60 * 60)
@@ -171,11 +171,11 @@ final class PaceModelTests: XCTestCase {
             )
         ]
 
-        let trend = UsageHistoryStore.recentTrend(samples: samples, now: now)
+        let trend = try XCTUnwrap(UsageHistoryStore.recentTrend(samples: samples, now: now))
 
-        XCTAssertEqual(trend?.primaryPercentPointsPerHour, 12, accuracy: 0.0001)
-        XCTAssertEqual(trend?.weeklyPercentPointsPerHour, 2, accuracy: 0.0001)
-        XCTAssertEqual(trend?.sampleCount, 2)
+        XCTAssertEqual(trend.primaryPercentPointsPerHour, 12, accuracy: 0.0001)
+        XCTAssertEqual(trend.weeklyPercentPointsPerHour, 2, accuracy: 0.0001)
+        XCTAssertEqual(trend.sampleCount, 2)
     }
 
     func testRecentTrendReturnsNilWhenHistoryIsInsufficient() {

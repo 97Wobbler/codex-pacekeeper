@@ -1315,8 +1315,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             return
         }
 
-        deliverNotificationIfNeeded(for: snapshot.primary, provider: provider)
-        deliverNotificationIfNeeded(for: snapshot.weekly, provider: provider)
+        for reading in snapshot.readings {
+            deliverNotificationIfNeeded(for: reading, provider: provider)
+        }
     }
 
     private func deliverNotificationIfNeeded(for reading: PaceReading, provider: UsageProvider) {
